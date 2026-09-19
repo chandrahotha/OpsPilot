@@ -1,7 +1,7 @@
 //! Node.js detection: manifest reading, package manager and framework resolution.
 
 use crate::{exists, read_text, Detector};
-use pilot_core::{BackendInfo, FrontendInfo, ProjectModel};
+use pilot_core::{BackendInfo, CommandInfo, FrontendInfo, ProjectModel};
 use serde_json::Value;
 
 /// Frontend frameworks resolved from package.json dependencies.
@@ -37,6 +37,12 @@ const LOCKFILES: &[(&str, &str)] = &[
     ("package-lock.json", "npm"),
 ];
 
+/// Scripts that start the project, in preference order (spec section 8)
+const RUN_SCRIPTS: &[&str] = &["dev", "start", "serve"];
+
+/// Scripts that are reported but never started automatically
+const SUPPORT_SCRIPTS: &[&str] = &["build", "test", "lint"];
+
 /// Detect Node.js projects and the framework they use
 pub struct NodeDetector;
 
@@ -51,11 +57,13 @@ impl Detector for NodeDetector {
 
     fn apply(&self, project_path: &str, model: &mut ProjectModel) -> Vec<String> {
         let mut evidence = vec!["package.json (node)".to_string()];
+        let mut package_manager = "npm";
 
         if let Some((file, manager)) = LOCKFILES
             .iter()
             .find(|(file, _)| exists(project_path, file))
         {
+            package_manager = manager;
             evidence.push(format!("{file} ({manager})"));
         }
 
@@ -84,7 +92,51 @@ impl Detector for NodeDetector {
             model.backend = Some(BackendInfo::new(*framework, port));
         }
 
+        collect_commands(&json, package_manager, model, &mut evidence);
+
         evidence
+    }
+}
+
+/// Collect the commands the project declares in its scripts.
+///
+/// Only scripts that exist are reported, and each command records its source, so
+/// the operation layer can show the user exactly what would run (spec section 19).
+fn collect_commands(
+    json: &Value,
+    package_manager: &str,
+    model: &mut ProjectModel,
+    evidence: &mut Vec<String>,
+) {
+    let Some(scripts) = json.get("scripts").and_then(Value::as_object) else {
+        return;
+    };
+
+    for script in RUN_SCRIPTS.iter().chain(SUPPORT_SCRIPTS.iter()) {
+        let Some(body) = scripts.get(*script).and_then(Value::as_str) else {
+            continue;
+        };
+
+        if body.trim().is_empty() {
+            continue;
+        }
+
+        let command = run_command(package_manager, script);
+
+        if !model.commands.iter().any(|known| known.name == *script) {
+            model.commands.push(CommandInfo::new(*script, command.clone(), "package.json scripts"));
+            evidence.push(format!("{script} command `{command}` (package.json scripts)"));
+        }
+    }
+}
+
+/// Build the run command for a package manager and script name
+fn run_command(package_manager: &str, script: &str) -> String {
+    match package_manager {
+        "yarn" => format!("yarn {script}"),
+        "pnpm" => format!("pnpm {script}"),
+        "bun" => format!("bun run {script}"),
+        _ => format!("npm run {script}"),
     }
 }
 
@@ -177,5 +229,62 @@ mod tests {
 
         assert!(model.frontend.is_none());
         assert!(evidence.iter().any(|line| line.contains("not readable")));
+    }
+
+    #[test]
+    fn declares_only_scripts_that_exist() {
+        let json = manifest(
+            r#"{
+                "scripts": {
+                    "dev": "vite",
+                    "build": "vite build",
+                    "deploy": "custom-thing"
+                }
+            }"#,
+        );
+        let mut model = ProjectModel::new("demo", ".");
+        let mut evidence = Vec::new();
+
+        collect_commands(&json, "npm", &mut model, &mut evidence);
+
+        let names: Vec<&str> = model.commands.iter().map(|command| command.name.as_str()).collect();
+
+        assert_eq!(names, vec!["dev", "build"]);
+        assert_eq!(model.commands[0].command, "npm run dev");
+        assert_eq!(model.commands[0].source, "package.json scripts");
+        assert!(evidence.iter().any(|line| line.contains("npm run dev")));
+    }
+
+    #[test]
+    fn uses_the_detected_package_manager_for_run_commands() {
+        assert_eq!(run_command("npm", "dev"), "npm run dev");
+        assert_eq!(run_command("yarn", "dev"), "yarn dev");
+        assert_eq!(run_command("pnpm", "dev"), "pnpm dev");
+        assert_eq!(run_command("bun", "dev"), "bun run dev");
+    }
+
+    #[test]
+    fn does_not_declare_the_same_command_twice() {
+        let json = manifest(r#"{"scripts":{"dev":"vite"}}"#);
+        let mut model = ProjectModel::new("demo", ".");
+        let mut evidence = Vec::new();
+
+        collect_commands(&json, "npm", &mut model, &mut evidence);
+        collect_commands(&json, "npm", &mut model, &mut evidence);
+
+        assert_eq!(model.commands.len(), 1);
+        assert_eq!(evidence.len(), 1);
+    }
+
+    #[test]
+    fn a_manifest_without_scripts_declares_nothing() {
+        let json = manifest(r#"{"dependencies":{"next":"15.0.0"}}"#);
+        let mut model = ProjectModel::new("demo", ".");
+        let mut evidence = Vec::new();
+
+        collect_commands(&json, "npm", &mut model, &mut evidence);
+
+        assert!(model.commands.is_empty());
+        assert!(evidence.is_empty());
     }
 }

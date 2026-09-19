@@ -316,7 +316,7 @@ mod tests {
     }
 }
 /// Ask a tool for its version, returning the first line of output on success
-fn tool_version(tool: &str) -> Option<String> {
+pub fn tool_version(tool: &str) -> Option<String> {
     let output = command_for(tool).output().ok()?;
 
     if !output.status.success() {
@@ -327,6 +327,13 @@ fn tool_version(tool: &str) -> Option<String> {
     let version = stdout.lines().next().unwrap_or_default().trim().to_string();
 
     (!version.is_empty()).then_some(version)
+}
+
+/// Whether a tool can be executed at all (read-only probe)
+///
+/// Used by the operation layer before it plans a startup step.
+pub fn tool_available(tool: &str) -> bool {
+    tool_version(tool).is_some()
 }
 
 /// Build a `--version` probe for a tool, handling Windows shims such as `npm.cmd`

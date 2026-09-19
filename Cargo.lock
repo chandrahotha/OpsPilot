@@ -2284,7 +2284,11 @@ version = "0.1.0"
 name = "pilot-process-manager"
 version = "0.1.0"
 dependencies = [
+ "pilot-core",
+ "pilot-diagnostics",
+ "pilot-port-manager",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
