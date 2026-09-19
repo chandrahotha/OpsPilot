@@ -1,6 +1,6 @@
 # OpsPilot - Cross-Platform Project Operations Launcher
 
-<img src="README-banner.png" alt="OpsPilot Banner" style="width:100%; max-width:800px; margin: 2rem 0;">
+<img width="1895" height="725" alt="image" src="https://github.com/user-attachments/assets/8de1986f-cc08-4386-a510-40df82dd852b" />
 
 > Install once, then: `cd any-project` → `ops-pilot`
 
