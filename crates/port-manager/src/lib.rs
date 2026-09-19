@@ -106,9 +106,36 @@ pub fn execute(operation: PortOperation) -> PortOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    /// Port tests bind and release real ports. Running them in parallel would let
+    /// one test take a port another test just released, so they are serialized.
+    fn port_lock() -> MutexGuard<'static, ()> {
+        static PORT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+        PORT_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Wait until the operating system has actually released a port
+    fn wait_until_free(port: u16) -> bool {
+        for _ in 0..50 {
+            if inspect_port(port).available {
+                return true;
+            }
+
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        false
+    }
 
     #[test]
     fn a_bound_port_is_reported_as_occupied() {
+        let _lock = port_lock();
+
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("must bind");
         let port = listener.local_addr().expect("must have an address").port();
 
@@ -124,9 +151,16 @@ mod tests {
 
     #[test]
     fn a_released_port_becomes_available_again() {
+        let _lock = port_lock();
+
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("must bind");
         let port = listener.local_addr().expect("must have an address").port();
         drop(listener);
+
+        assert!(
+            wait_until_free(port),
+            "port {port} should be free again after the listener is dropped"
+        );
 
         let status = inspect_port(port);
 
@@ -136,6 +170,8 @@ mod tests {
 
     #[test]
     fn free_port_search_skips_occupied_ports() {
+        let _lock = port_lock();
+
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("must bind");
         let occupied = listener.local_addr().expect("must have an address").port();
 
@@ -155,6 +191,8 @@ mod tests {
 
     #[test]
     fn inspecting_through_the_operation_layer_returns_a_status() {
+        let _lock = port_lock();
+
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("must bind");
         let port = listener.local_addr().expect("must have an address").port();
 
