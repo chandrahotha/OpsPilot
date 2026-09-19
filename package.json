@@ -19,6 +19,8 @@
     "build:cli": "cargo build --release --bin pilot",
     "install:global": "npm run build:cli && npm install -g ./pilot/packages/cli",
     "uninstall:global": "npm uninstall -g ops-pilot",
+    "audit": "npm audit && npm run audit:rust",
+    "audit:rust": "cargo audit --file Cargo.lock",
     "dev": "npm --workspace ops-pilot-desktop run dev",
     "pilot": "node pilot/packages/cli/bin/ops-pilot.js",
     "pilot:dev": "cargo run --bin pilot --",

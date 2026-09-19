@@ -128,6 +128,25 @@ OpsPilot/
 | `npm run pilot -- <path>` | Run the CLI through the npm launcher |
 | `npm run dev` | Tauri development window |
 
+## Security
+
+| Check | Result |
+| --- | --- |
+| `npm audit` | 0 vulnerabilities (vite 7.3.6 / plugin-react 5.2.0 cleared the esbuild dev-server advisory GHSA-67mh-4wv8-2f99) |
+| `cargo audit --file Cargo.lock` | 0 vulnerabilities, 7 unmaintained/unsound warnings, all transitive in Tauri's dependency tree |
+
+The Rust warnings, none of which are vulnerable versions:
+
+| Crate | Version | Advisory | Kind | Reachable from |
+| --- | --- | --- | --- | --- |
+| `glib` | 0.18.5 | RUSTSEC-2024-0429 | unsound | Tauri's Linux GTK stack (not built on Windows) |
+| `proc-macro-error` | 1.0.4 | RUSTSEC-2024-0370 | unmaintained | non-Windows targets |
+| `unic-char-property`, `unic-char-range`, `unic-common`, `unic-ucd-ident`, `unic-ucd-version` | 0.9.0 | RUSTSEC-2025-0081 / -0075 / -0080 / -0100 / -0098 | unmaintained | `urlpattern` → `tauri-utils` |
+
+They can only be cleared upstream by Tauri (its Linux backend still uses GTK3);
+there is nothing to fix in OpsPilot's own code. Re-check with
+`npm run audit`, which needs `cargo install cargo-audit` once per machine.
+
 ## Testing
 
 - Rust: `cargo test --workspace` - unit tests per crate plus integration tests in
