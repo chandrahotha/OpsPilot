@@ -2268,6 +2268,10 @@ dependencies = [
 [[package]]
 name = "pilot-docker"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "pilot-integrations"
