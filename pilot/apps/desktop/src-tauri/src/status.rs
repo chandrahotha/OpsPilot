@@ -115,6 +115,37 @@ mod tests {
     use super::*;
     use pilot_core::{DatabaseInfo, DockerInfo, FrontendInfo};
     use std::net::{Ipv4Addr, TcpListener};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use std::time::Duration;
+
+    /// Port tests bind and release real ports. Running them in parallel would let
+    /// one test take a port another test just released, so they are serialized.
+    fn port_lock() -> MutexGuard<'static, ()> {
+        static PORT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+        PORT_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Wait until the operating system has actually released a port
+    fn wait_until_free(port: u16) -> bool {
+        for _ in 0..50 {
+            if pilot_port_manager_free(port) {
+                return true;
+            }
+
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        false
+    }
+
+    /// Reuse the port manager's own read-only inspection for the wait loop
+    fn pilot_port_manager_free(port: u16) -> bool {
+        ServiceStatus::from_port("test", "Test", port).state == ServiceState::Stopped
+    }
 
     /// A port that is currently occupied by a listener held by the test
     fn occupied_port() -> (TcpListener, u16) {
@@ -126,6 +157,7 @@ mod tests {
 
     #[test]
     fn a_service_is_running_when_its_port_is_listening() {
+        let _lock = port_lock();
         let (_listener, port) = occupied_port();
 
         let status = ServiceStatus::from_port("frontend", "Frontend", port);
@@ -137,9 +169,16 @@ mod tests {
 
     #[test]
     fn a_service_is_stopped_when_its_port_is_released() {
+        let _lock = port_lock();
+
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("must bind");
         let port = listener.local_addr().expect("must have an address").port();
         drop(listener);
+
+        assert!(
+            wait_until_free(port),
+            "port {port} should be free again after the listener is dropped"
+        );
 
         let status = ServiceStatus::from_port("backend", "Backend", port);
 
