@@ -2,5 +2,10 @@
 name = "pilot-database"
 version = "0.1.0"
 edition = "2024"
+description = "Database operations for Pilot (Prisma, Django, Alembic, PostgreSQL)"
+license = "MIT"
 
 [dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+pilot-process-manager = { path = "../process-manager" }

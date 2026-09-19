@@ -2255,6 +2255,11 @@ dependencies = [
 [[package]]
 name = "pilot-database"
 version = "0.1.0"
+dependencies = [
+ "pilot-process-manager",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "pilot-diagnostics"
