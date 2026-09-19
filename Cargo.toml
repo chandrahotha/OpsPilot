@@ -1,0 +1,31 @@
+[package]
+name = "ops-pilot"
+version = "0.1.0"
+edition = "2024"
+description = "Pilot - Cross-Platform Project Operations Launcher"
+license = "MIT"
+
+[[bin]]
+name = "pilot"
+path = "src/main.rs"
+
+[dependencies]
+pilot-core = { path = "crates/core" }
+pilot-scanner = { path = "crates/scanner" }
+serde_json = "1.0"
+
+[workspace]
+
+resolver = "3"
+
+members = [
+  "crates/core",
+  "crates/scanner",
+  "crates/process-manager",
+  "crates/port-manager",
+  "crates/docker",
+  "crates/database",
+  "crates/diagnostics",
+  "crates/integrations",
+  "pilot/apps/desktop/src-tauri",
+]
