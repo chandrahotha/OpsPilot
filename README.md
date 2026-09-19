@@ -12,20 +12,50 @@ React and renders only what the engine actually detected.
 
 ---
 
-## Quick Start (from source)
+## Install
+
+### Global CLI (npm)
+
+```bash
+npm install -g ops-pilot
+cd my-project
+pilot
+```
+
+`pilot [path] [--json]` scans a directory and reports the detected stack, service
+ports, database, ORM, Docker and environment files, each with its evidence.
+
+The npm package is a thin Node launcher (`pilot/packages/cli`) that runs the
+native `pilot` binary. It resolves that binary in this order:
+
+1. `OPS_PILOT_BINARY` - explicit override
+2. `@ops-pilot/cli-<platform>-<arch>` - optional platform package carrying the binary
+3. `bin/pilot[.exe]` inside the package - populated by the release pipeline (phase 11)
+4. `target/{release,debug}/pilot[.exe]` in this repository - development builds
+
+If none exists, the launcher prints exactly what it searched and how to build the
+binary, instead of failing silently.
+
+### From source
 
 ```bash
 git clone https://github.com/chandrahotha/OpsPilot
 cd OpsPilot
 npm install
-npm run dev          # opens the Tauri window
+cargo build --release --bin pilot     # native CLI
+npm install -g ./pilot/packages/cli   # expose it as `pilot`
+npm run dev                           # Tauri window
 ```
 
-Scan a directory from the CLI:
+Shortcuts: `npm run install:global` builds the CLI and installs it globally;
+`npm run uninstall:global` removes it.
+
+### CLI shortcuts (repository)
 
 ```bash
-npm run pilot -- .            # human-readable summary
+npm run pilot -- .            # human-readable summary via the npm launcher
 npm run pilot -- . --json     # normalized project model as JSON
+npm run pilot:dev -- .        # same, straight through cargo
 ```
 
 ## What works today
@@ -87,11 +117,15 @@ OpsPilot/
 
 | Command | Purpose |
 | --- | --- |
-| `npm run test` | `cargo test --workspace` (unit + integration tests) |
+| `npm run test` | All tests: Rust workspace + npm launcher |
+| `npm run test:rust` | `cargo test --workspace` |
+| `npm run test:cli` | Launcher resolution tests (`node --test`) |
 | `npm run typecheck` | TypeScript check for the shared package and the desktop app |
-| `npm run check` | Typecheck + Rust tests |
+| `npm run check` | Typecheck + all tests |
 | `npm run build` | Rust workspace build + web bundle |
-| `npm run pilot -- <path>` | Run the CLI against a directory |
+| `npm run build:cli` | Release build of the native `pilot` binary |
+| `npm run install:global` | Build the CLI and install it globally as `pilot` |
+| `npm run pilot -- <path>` | Run the CLI through the npm launcher |
 | `npm run dev` | Tauri development window |
 
 ## Testing

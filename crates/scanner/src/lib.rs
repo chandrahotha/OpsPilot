@@ -10,7 +10,8 @@
 //! (see "Pilot Prerequisite.md" section 19).
 
 use std::fs;
-use std::path::PathBuf;
+use std::io;
+use std::path::{Component, PathBuf};
 
 pub mod detectors;
 pub mod scan;
@@ -47,6 +48,27 @@ pub fn project_name_from_path(path: &str) -> String {
         .find(|segment| !segment.is_empty() && *segment != ".")
         .unwrap_or("unknown-project")
         .to_string()
+}
+
+/// Resolve a user-supplied directory to an absolute, lexically cleaned path.
+///
+/// Front ends call this before scanning so that `pilot` with no argument reports
+/// the real directory name instead of `.` (see "Pilot Prerequisite.md" section 1:
+/// `cd my-project` then `pilot`).
+pub fn resolve_project_path(project_path: &str) -> io::Result<String> {
+    let candidate = PathBuf::from(project_path);
+    let absolute = if candidate.is_absolute() {
+        candidate
+    } else {
+        std::env::current_dir()?.join(candidate)
+    };
+
+    let cleaned: PathBuf = absolute
+        .components()
+        .filter(|component| !matches!(component, Component::CurDir))
+        .collect();
+
+    Ok(cleaned.to_string_lossy().to_string())
 }
 
 /// Whether a path relative to the project root exists
@@ -88,5 +110,26 @@ mod tests {
         // The scanner's own crate root always contains a Cargo.toml.
         assert!(exists(".", "Cargo.toml"));
         assert!(read_text(".", "Cargo.toml").is_some_and(|text| text.contains("pilot-scanner")));
+    }
+
+    #[test]
+    fn relative_paths_resolve_to_a_named_directory() {
+        let resolved = resolve_project_path(".").expect("the current directory must resolve");
+
+        assert!(!resolved.ends_with('.'), "resolved path must not end in a dot");
+
+        let name = project_name_from_path(&resolved);
+
+        assert_ne!(name, "unknown-project");
+        assert!(!name.is_empty());
+    }
+
+    #[test]
+    fn absolute_paths_survive_resolution() {
+        let absolute = std::env::temp_dir().join("ops-pilot-resolve-check");
+        let resolved =
+            resolve_project_path(&absolute.to_string_lossy()).expect("must resolve an absolute path");
+
+        assert_eq!(project_name_from_path(&resolved), "ops-pilot-resolve-check");
     }
 }

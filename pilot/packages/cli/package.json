@@ -1,0 +1,32 @@
+{
+  "name": "ops-pilot",
+  "version": "0.1.0",
+  "description": "Detect and operate an unfamiliar project directory: services, ports, environment and diagnostics.",
+  "license": "MIT",
+  "type": "commonjs",
+  "bin": {
+    "pilot": "bin/ops-pilot.js",
+    "ops-pilot": "bin/ops-pilot.js"
+  },
+  "main": "lib/resolve-binary.js",
+  "files": [
+    "bin",
+    "lib",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "project",
+    "operations",
+    "launcher",
+    "devtools",
+    "cli",
+    "docker",
+    "diagnostics"
+  ],
+  "scripts": {
+    "test": "node --test"
+  }
+}
