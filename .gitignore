@@ -1,0 +1,16 @@
+# Rust
+/target
+**/target
+/pilot/apps/desktop/src-tauri/gen/schemas
+
+# Node
+node_modules
+**/node_modules
+dist
+
+# Logs produced by local build verification
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db

@@ -1,0 +1,10 @@
+[package]
+name = "pilot-scanner"
+version = "0.1.0"
+edition = "2024"
+description = "Modular project detection engine for Pilot"
+license = "MIT"
+
+[dependencies]
+pilot-core = { path = "../core" }
+serde_json = "1.0"
