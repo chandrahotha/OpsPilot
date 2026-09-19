@@ -33,16 +33,7 @@ impl Detector for PrismaDetector {
             return evidence;
         };
 
-        let provider = schema
-            .lines()
-            .map(|line| line.trim_start().to_lowercase())
-            .find_map(|line| {
-                if !line.starts_with("provider") {
-                    return None;
-                }
-                let (_, value) = line.split_once('=')?;
-                Some(value.trim().trim_matches('"').to_string())
-            });
+        let provider = provider_from_schema(&schema);
 
         match provider.as_deref() {
             Some("sqlite") => {
@@ -65,6 +56,40 @@ impl Detector for PrismaDetector {
     }
 }
 
+/// Extract the `provider = "..."` value from a Prisma schema.
+///
+/// Tolerant of formatting: the left-hand side of the assignment only has to end
+/// in `provider`, so both multi-line schemas and single-line `datasource db { provider = "postgresql" }`
+/// fragments are recognised.
+fn provider_from_schema(schema: &str) -> Option<String> {
+    schema.lines().find_map(|line| {
+        let (left, right) = line.split_once('=')?;
+
+        let is_provider = left
+            .trim_end()
+            .to_lowercase()
+            .rsplit([' ', '\t', '{'])
+            .next()
+            .is_some_and(|token| token == "provider");
+
+        if !is_provider {
+            return None;
+        }
+
+        // Stop at the closing quote, brace or whitespace so that both
+        // `"postgresql"` and `"mysql" }` yield the bare provider name.
+        let value = right
+            .trim()
+            .trim_start_matches('"')
+            .split(|character: char| character == '"' || character == '}' || character.is_whitespace())
+            .next()
+            .unwrap_or_default()
+            .to_lowercase();
+
+        (!value.is_empty()).then_some(value)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,5 +98,24 @@ mod tests {
     fn detects_schema_presence() {
         assert!(!PrismaDetector.detect("this/path/does/not/exist"));
         assert_eq!(PrismaDetector.name(), "prisma");
+    }
+
+    #[test]
+    fn reads_the_provider_from_a_multiline_schema() {
+        let schema = "datasource db {\n  provider = \"postgresql\"\n  url      = env(\"DATABASE_URL\")\n}\n";
+
+        assert_eq!(provider_from_schema(schema).as_deref(), Some("postgresql"));
+    }
+
+    #[test]
+    fn reads_the_provider_from_a_single_line_schema() {
+        let schema = "datasource db { provider = \"mysql\" }";
+
+        assert_eq!(provider_from_schema(schema).as_deref(), Some("mysql"));
+    }
+
+    #[test]
+    fn ignores_schemas_without_a_provider() {
+        assert_eq!(provider_from_schema("model User {\n  id Int @id\n}\n"), None);
     }
 }

@@ -34,12 +34,22 @@ fn main() -> ExitCode {
 
     let path = target.unwrap_or_else(|| ".".to_string());
 
-    if !Path::new(&path).is_dir() {
-        eprintln!("pilot: `{path}` is not a directory");
+    // Normalize before scanning so that `pilot` in a project folder reports the
+    // real directory name instead of ".".
+    let root = match pilot_scanner::resolve_project_path(&path) {
+        Ok(root) => root,
+        Err(error) => {
+            eprintln!("pilot: could not resolve `{path}`: {error}");
+            return ExitCode::from(USAGE_ERROR);
+        }
+    };
+
+    if !Path::new(&root).is_dir() {
+        eprintln!("pilot: `{root}` is not a directory");
         return ExitCode::from(USAGE_ERROR);
     }
 
-    let result = pilot_scanner::scan_project(&path);
+    let result = pilot_scanner::scan_project(&root);
 
     if json {
         match serde_json::to_string_pretty(&result) {
@@ -50,7 +60,7 @@ fn main() -> ExitCode {
             }
         }
     } else {
-        print_report(&result, &path);
+        print_report(&result, &root);
     }
 
     ExitCode::SUCCESS

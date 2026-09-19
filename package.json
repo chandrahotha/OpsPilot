@@ -1,21 +1,28 @@
 {
-  "name": "ops-pilot",
+  "name": "ops-pilot-monorepo",
   "private": true,
   "workspaces": [
     "pilot/apps/desktop",
     "pilot/packages/shared",
+    "pilot/packages/cli",
     "pilot/crates/*"
   ],
   "version": "0.1.0",
   "description": "Cross-Platform Project Operations Launcher",
   "scripts": {
-    "test": "cargo test --workspace",
+    "test": "npm run test:rust && npm run test:cli",
+    "test:rust": "cargo test --workspace",
+    "test:cli": "npm --workspace ops-pilot test",
     "typecheck": "npm --workspace ops-pilot-shared run typecheck && npm --workspace ops-pilot-desktop run check",
     "check": "npm run typecheck && npm run test",
     "build": "cargo build --workspace && npm --workspace ops-pilot-desktop run build:web",
+    "build:cli": "cargo build --release --bin pilot",
+    "install:global": "npm run build:cli && npm install -g ./pilot/packages/cli",
+    "uninstall:global": "npm uninstall -g ops-pilot",
     "dev": "npm --workspace ops-pilot-desktop run dev",
-    "start": "cargo run --bin pilot --",
-    "pilot": "cargo run --bin pilot --"
+    "pilot": "node pilot/packages/cli/bin/ops-pilot.js",
+    "pilot:dev": "cargo run --bin pilot --",
+    "start": "cargo run --bin pilot --"
   },
   "keywords": ["project", "operations", "launcher", "tauri", "rust", "react"],
   "author": "",

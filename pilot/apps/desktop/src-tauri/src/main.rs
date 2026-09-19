@@ -41,7 +41,9 @@ fn resolve_project_path(path: Option<String>) -> Result<String, String> {
         return Err(format!("`{}` is not a directory", candidate.display()));
     }
 
-    Ok(candidate.to_string_lossy().to_string())
+    // Normalize so the dashboard shows a real project name and path instead of `.`.
+    pilot_scanner::resolve_project_path(&candidate.to_string_lossy())
+        .map_err(|error| format!("could not resolve `{}`: {error}", candidate.display()))
 }
 
 /// Scan a project directory and return the normalized project model
