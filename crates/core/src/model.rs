@@ -110,6 +110,33 @@ impl OrmInfo {
     }
 }
 
+/// A command the project declares, ready to be executed by Pilot.
+///
+/// Pilot only runs commands it can show the user first
+/// ("Pilot Prerequisite.md" sections 8 and 19): every entry records where it was
+/// found, and no command is invented from a detected framework alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandInfo {
+    /// Stable command name (dev, start, build, test, lint)
+    pub name: String,
+    /// The exact command line Pilot would execute
+    pub command: String,
+    /// Where the command was found (package.json scripts, manage.py, ...)
+    pub source: String,
+}
+
+impl CommandInfo {
+    /// Create command information
+    pub fn new(name: impl Into<String>, command: impl Into<String>, source: impl Into<String>) -> Self {
+        CommandInfo {
+            name: name.into(),
+            command: command.into(),
+            source: source.into(),
+        }
+    }
+}
+
 /// Docker detection status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct DockerInfo {
@@ -175,6 +202,9 @@ pub struct ProjectModel {
     /// Environment configuration
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<EnvironmentInfo>,
+    /// Commands the project declares
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<CommandInfo>,
 }
 
 impl ProjectModel {
@@ -188,6 +218,7 @@ impl ProjectModel {
             orm: None,
             docker: None,
             environment: None,
+            commands: Vec::new(),
         }
     }
 
@@ -215,6 +246,7 @@ mod tests {
             orm: Some(OrmInfo::new("prisma")),
             docker: Some(DockerInfo::new(true, true)),
             environment: Some(EnvironmentInfo::new(true, true, false)),
+            commands: vec![CommandInfo::new("dev", "npm run dev", "package.json scripts")],
         }
     }
 
@@ -268,5 +300,30 @@ mod tests {
 
         assert_eq!(parsed.project.name, "x");
         assert!(parsed.frontend.is_none());
+        assert!(parsed.commands.is_empty());
+    }
+
+    #[test]
+    fn declared_commands_serialize_with_camel_case_keys() {
+        let mut model = ProjectModel::new("demo", ".");
+        model.commands.push(CommandInfo::new(
+            "dev",
+            "npm run dev",
+            "package.json scripts",
+        ));
+
+        let json = serde_json::to_value(&model).expect("model must serialize");
+        let command = &json["commands"][0];
+
+        assert_eq!(command["name"], "dev");
+        assert_eq!(command["command"], "npm run dev");
+        assert_eq!(command["source"], "package.json scripts");
+    }
+
+    #[test]
+    fn empty_command_list_is_omitted() {
+        let json = serde_json::to_value(ProjectModel::new("demo", ".")).expect("must serialize");
+
+        assert!(json.get("commands").is_none());
     }
 }

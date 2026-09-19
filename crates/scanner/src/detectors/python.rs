@@ -1,7 +1,7 @@
 //! Python detection: manifests, framework and database driver resolution.
 
 use crate::{exists, read_text, Detector};
-use pilot_core::{BackendInfo, DatabaseInfo, OrmInfo, ProjectModel};
+use pilot_core::{BackendInfo, CommandInfo, DatabaseInfo, OrmInfo, ProjectModel};
 
 /// Python manifests that mark the directory as a Python project
 const MANIFESTS: &[&str] = &[
@@ -55,6 +55,17 @@ impl Detector for PythonDetector {
             evidence.push("manage.py (python)".to_string());
             model.backend = Some(BackendInfo::new("django", 8000));
             model.orm = Some(OrmInfo::new("django"));
+
+            // manage.py is the canonical Django runner, so this is an explicit
+            // command rather than an assumption about the framework.
+            let command = "python manage.py runserver";
+
+            if !model.commands.iter().any(|known| known.name == "dev") {
+                model
+                    .commands
+                    .push(CommandInfo::new("dev", command, "manage.py"));
+                evidence.push(format!("dev command `{command}` (manage.py)"));
+            }
         }
 
         let manifests = MANIFESTS

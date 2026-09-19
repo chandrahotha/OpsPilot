@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 pub mod model;
 
 pub use model::{
-    BackendInfo, DatabaseInfo, DockerInfo, EnvironmentInfo, FrontendInfo, OrmInfo, ProjectInfo,
-    ProjectModel,
+    BackendInfo, CommandInfo, DatabaseInfo, DockerInfo, EnvironmentInfo, FrontendInfo, OrmInfo,
+    ProjectInfo, ProjectModel,
 };
 
 /// Result of scanning a project directory
