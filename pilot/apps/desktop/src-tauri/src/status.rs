@@ -97,6 +97,16 @@ pub fn build_status(model: &ProjectModel) -> Vec<ServiceStatus> {
             "Database",
             database.port,
         ));
+    } else if model.docker.is_some_and(|docker| docker.compose) {
+        // Fallback: Docker Compose detected but no explicit database config found.
+        // This can happen when the database runs in Docker Compose but the project
+        // lacks traditional config files (Prisma, Django, Alembic).
+        // We report it as Unknown since we can't probe the port without knowing it.
+        services.push(ServiceStatus::unknown(
+            "database",
+            "Database",
+            "detected via Docker Compose (port unknown; phase 5 will add probe support)",
+        ));
     }
 
     if model.docker.is_some_and(|docker| docker.detected) {
