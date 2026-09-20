@@ -1,4 +1,4 @@
-﻿//! Pilot Port Manager - Port detection, conflict handling, and process ownership
+//! Pilot Port Manager - Port detection, conflict handling, and process ownership
 //!
 //! Phase 7: Detects configured application ports, ports currently in use,
 //! identifies the owning process (PID + name), and safely changes port
@@ -9,7 +9,6 @@
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs;
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -136,14 +135,12 @@ impl PortManager {
         let pid_regex = Regex::new(r"\s+(\d+)\s*$").ok()?;
         
         for line in stdout.lines() {
-            if line.contains(&format!(":{}", port)) && (line.contains("TCP") || line.contains("UDP")) {
-                if let Some(caps) = pid_regex.captures(line) {
-                    if let Ok(pid) = caps.get(1).unwrap().as_str().parse::<u32>() {
-                        if let Some(owner) = self.get_process_info_windows(pid) {
-                            return Some(owner);
-                        }
-                    }
-                }
+            if line.contains(&format!(":{}", port)) && (line.contains("TCP") || line.contains("UDP"))
+                && let Some(caps) = pid_regex.captures(line)
+                && let Ok(pid) = caps.get(1).unwrap().as_str().parse::<u32>()
+                && let Some(owner) = self.get_process_info_windows(pid)
+            {
+                return Some(owner);
             }
         }
         None
@@ -423,14 +420,12 @@ impl PortChanger {
 /// Port manager with both inspection and changing capabilities
 pub struct PortManagerWithChange {
     inspector: PortManager,
-    changer: PortChanger,
 }
 
 impl PortManagerWithChange {
     pub fn new() -> Self {
         Self {
             inspector: PortManager::new(),
-            changer: PortChanger,
         }
     }
 

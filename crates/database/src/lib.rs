@@ -7,7 +7,6 @@
 use pilot_process_manager::{LocalProcessManager, ProcessManager, ProcessOutcome, ProcessRequest, ProcessState};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::process::Command;
 use std::time::Duration;
 
 /// Database operation type
@@ -405,7 +404,7 @@ impl DatabaseManager {
         let outcome = self.process_manager.start(&request);
         
         match outcome {
-            ProcessOutcome::Started(snapshot) => {
+            ProcessOutcome::Started(_snapshot) => {
                 std::thread::sleep(Duration::from_secs(2));
                 
                 let status_outcome = self.process_manager.status(&request.label);
