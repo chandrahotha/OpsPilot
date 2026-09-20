@@ -55,3 +55,8 @@ export function stopProject(): Promise<string> {
 export function restartProject(): Promise<string> {
   return invoke<string>('restart_project');
 }
+
+/** Open a directory picker to select a project folder */
+export function selectDirectory(): Promise<string | null> {
+  return invoke<string | null>('select_directory');
+}
