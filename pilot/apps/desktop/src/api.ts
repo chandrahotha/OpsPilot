@@ -41,19 +41,19 @@ export function runDiagnostics(path?: string): Promise<DiagnosticsReport> {
   return invoke<DiagnosticsReport>('run_diagnostics', { path: path ?? null });
 }
 
-/** Start the project (process lifecycle - phase 4) */
-export function startProject(): Promise<string> {
-  return invoke<string>('start_project');
+/** Start a project service (process lifecycle - phase 4) */
+export function startProject(path: string | undefined, service: string): Promise<string> {
+  return invoke<string>('start_project', { path: path ?? null, service });
 }
 
-/** Stop the project (process lifecycle - phase 4) */
-export function stopProject(): Promise<string> {
-  return invoke<string>('stop_project');
+/** Stop a project service (process lifecycle - phase 4) */
+export function stopProject(service: string): Promise<string> {
+  return invoke<string>('stop_project', { service });
 }
 
-/** Restart the project (process lifecycle - phase 4) */
-export function restartProject(): Promise<string> {
-  return invoke<string>('restart_project');
+/** Restart a project service (process lifecycle - phase 4) */
+export function restartProject(service: string): Promise<string> {
+  return invoke<string>('restart_project', { service });
 }
 
 /** Open a directory picker to select a project folder */

@@ -9,6 +9,9 @@ import type { ServiceState, ServiceStatus } from 'ops-pilot-shared';
 
 interface ServiceGridProps {
   services: ServiceStatus[];
+  onStart: (service: string) => void;
+  onStop: (service: string) => void;
+  onRestart: (service: string) => void;
 }
 
 const STATE_INDICATOR: Record<ServiceState, string> = {
@@ -23,7 +26,7 @@ const STATE_LABEL: Record<ServiceState, string> = {
   unknown: 'Not observable yet',
 };
 
-export function ServiceGrid({ services }: ServiceGridProps) {
+export function ServiceGrid({ services, onStart, onStop, onRestart }: ServiceGridProps) {
   if (services.length === 0) {
     return (
       <section className="services">
@@ -49,6 +52,28 @@ export function ServiceGrid({ services }: ServiceGridProps) {
             <div className="service-details">
               <p>{service.port === undefined ? 'Port: —' : `Port: ${service.port}`}</p>
               <p className="detail">{service.detail}</p>
+            </div>
+            <div className="service-actions">
+              <button 
+                type="button" 
+                onClick={() => onStart(service.label)}
+                disabled={service.state === 'running'}
+              >
+                Start
+              </button>
+              <button 
+                type="button" 
+                onClick={() => onStop(service.label)}
+                disabled={service.state === 'stopped'}
+              >
+                Stop
+              </button>
+              <button 
+                type="button" 
+                onClick={() => onRestart(service.label)}
+              >
+                Restart
+              </button>
             </div>
           </div>
         ))}
