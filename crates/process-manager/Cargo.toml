@@ -8,6 +8,7 @@ serde = { version = "1.0", features = ["derive"] }
 pilot-core = { path = "../core" }
 pilot-diagnostics = { path = "../diagnostics" }
 pilot-port-manager = { path = "../port-manager" }
+tokio = { version = "1.39", features = ["sync", "time", "rt-multi-thread", "macros"] }
 
 [dev-dependencies]
 serde_json = "1.0"

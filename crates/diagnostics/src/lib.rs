@@ -7,7 +7,8 @@
 //! Checks are deterministic and read-only. They combine what the scanner already
 //! collected with toolchain probes; no project command is ever executed.
 
-use pilot_core::ProjectModel;
+use pilot_core::{DatabaseInfo, ProjectModel};
+use pilot_port_manager::PortManager;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::process::Command;
@@ -146,6 +147,19 @@ pub fn run_diagnostics(project_path: &str, model: &ProjectModel) -> DiagnosticsR
     checks.push(dependencies_check(project_path, model));
     checks.push(environment_check(project_path, model));
 
+    // Phase 8: Database and service reachability checks
+    if let Some(db) = &model.database {
+        checks.push(database_reachability_check(db));
+    }
+
+    // Check service ports (frontend/backend) if they are configured
+    if let Some(frontend) = &model.frontend {
+        checks.push(service_reachability_check("frontend", frontend.port, "Frontend service"));
+    }
+    if let Some(backend) = &model.backend {
+        checks.push(service_reachability_check("backend", backend.port, "Backend service"));
+    }
+
     DiagnosticsReport::new(checks)
 }
 
@@ -221,6 +235,58 @@ fn environment_check(project_path: &str, model: &ProjectModel) -> DiagnosticResu
         .with_cause("The project expects a local environment file that was never created")
     } else {
         DiagnosticResult::passed("environment", "Environment", "no .env file expected")
+    }
+}
+
+/// Check if a database is reachable via its configured port
+fn database_reachability_check(db: &DatabaseInfo) -> DiagnosticResult {
+    let port = db.port;
+
+    let port_manager = PortManager::new();
+    let status = port_manager.inspect_port(port);
+
+    if status.available {
+        DiagnosticResult::failed(
+            "database-reachability",
+            "Database Reachability",
+            format!("database port {} is not listening", port),
+            format!("port {} is available (no process listening)", port),
+            "Start the database service (e.g., PostgreSQL, MySQL) or verify the port configuration.",
+        )
+        .with_cause("the database server is not running or is listening on a different port")
+    } else {
+        let process = status.process.unwrap_or_else(|| "unknown process".to_string());
+        let pid = status.pid.unwrap_or(0);
+        DiagnosticResult::passed(
+            "database-reachability",
+            "Database Reachability",
+            format!("database port {} is listening (PID {}: {})", port, pid, process),
+        )
+    }
+}
+
+/// Check if a service port is reachable
+fn service_reachability_check(service_type: &str, port: u16, label: &str) -> DiagnosticResult {
+    let port_manager = PortManager::new();
+    let status = port_manager.inspect_port(port);
+
+    if status.available {
+        DiagnosticResult::failed(
+            format!("{}-reachability", service_type),
+            format!("{} Reachability", label),
+            format!("{} port {} is not listening", label, port),
+            format!("port {} is available (no process listening)", port),
+            format!("Start the {} service or verify the port configuration.", label.to_lowercase()),
+        )
+        .with_cause(format!("the {} server is not running or is listening on a different port", label.to_lowercase()))
+    } else {
+        let process = status.process.unwrap_or_else(|| "unknown process".to_string());
+        let pid = status.pid.unwrap_or(0);
+        DiagnosticResult::passed(
+            format!("{}-reachability", service_type),
+            format!("{} Reachability", label),
+            format!("{} port {} is listening (PID {}: {})", label, port, pid, process),
+        )
     }
 }
 
