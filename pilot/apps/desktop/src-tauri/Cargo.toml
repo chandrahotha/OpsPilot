@@ -14,7 +14,9 @@ tauri = { version = "2.0", features = ["tray-icon", "http-range", "default"] }
 tauri-plugin-dialog = "2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
 pilot-core = { path = "../../../../crates/core" }
 pilot-scanner = { path = "../../../../crates/scanner" }
 pilot-port-manager = { path = "../../../../crates/port-manager" }
 pilot-diagnostics = { path = "../../../../crates/diagnostics" }
+pilot-process-manager = { path = "../../../../crates/process-manager" }
