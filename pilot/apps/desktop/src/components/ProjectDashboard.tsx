@@ -16,9 +16,9 @@ interface ProjectDashboardProps {
   services: ServiceStatus[];
   report: DiagnosticsReport | null;
   message: string | null;
-  onStartProject: () => void;
-  onStopProject: () => void;
-  onRestartProject: () => void;
+  onStartProject: (service: string) => void;
+  onStopProject: (service: string) => void;
+  onRestartProject: (service: string) => void;
   onRunDiagnostics: () => void;
 }
 
@@ -40,19 +40,15 @@ export function ProjectDashboard({
         <p>{model.project.path || '—'}</p>
       </header>
 
-      <ServiceGrid services={services} />
+      <ServiceGrid 
+        services={services} 
+        onStart={onStartProject}
+        onStop={onStopProject}
+        onRestart={onRestartProject}
+      />
 
       <section className="actions">
         <div className="action-buttons">
-          <button type="button" onClick={onStartProject}>
-            Start Project
-          </button>
-          <button type="button" onClick={onStopProject}>
-            Stop
-          </button>
-          <button type="button" onClick={onRestartProject}>
-            Restart
-          </button>
           <button type="button" onClick={onRunDiagnostics}>
             Diagnostics
           </button>

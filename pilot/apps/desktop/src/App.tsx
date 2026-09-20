@@ -213,9 +213,9 @@ function App() {
             services={services}
             report={report}
             message={message}
-            onStartProject={() => void runAction(api.startProject)}
-            onStopProject={() => void runAction(api.stopProject)}
-            onRestartProject={() => void runAction(api.restartProject)}
+            onStartProject={(service) => void runAction(() => api.startProject(currentPath, service))}
+            onStopProject={(service) => void runAction(() => api.stopProject(service))}
+            onRestartProject={(service) => void runAction(() => api.restartProject(service))}
             onRunDiagnostics={() => void runDiagnostics()}
           />
         ) : (
