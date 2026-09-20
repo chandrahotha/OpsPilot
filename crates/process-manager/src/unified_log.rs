@@ -92,7 +92,7 @@ impl UnifiedLogStream {
 
     /// Clear logs for a specific service
     pub async fn clear_service(&self, service: &str) {
-        let mut buffers = self.buffers.write().await;
+        let buffers = self.buffers.write().await;
         if let Some(buffer) = buffers.get(service) {
             buffer.lock().await.clear();
         }
@@ -100,7 +100,7 @@ impl UnifiedLogStream {
 
     /// Clear all logs
     pub async fn clear_all(&self) {
-        let mut buffers = self.buffers.write().await;
+        let buffers = self.buffers.write().await;
         for buffer in buffers.values() {
             buffer.lock().await.clear();
         }
