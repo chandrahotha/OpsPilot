@@ -5,6 +5,8 @@
 //! project command. The GUI renders whatever the engine detected, which is what
 //! makes the menu dynamic per project.
 
+#![windows_subsystem = "windows"]
+
 mod status;
 
 use pilot_core::ProjectModel;
