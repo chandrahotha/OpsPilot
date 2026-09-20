@@ -100,15 +100,38 @@ fn restart_project() -> Result<String, String> {
     Err("Restarting projects is not implemented yet (phase 4).".to_string())
 }
 
+/// Open a directory picker and return the selected path
+#[command]
+async fn select_directory(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    use std::sync::mpsc;
+    
+    let (tx, rx) = mpsc::channel();
+    
+    app.dialog()
+        .file()
+        .set_title("Select Project Directory")
+        .pick_folder(move |path| {
+            let _ = tx.send(path.map(|p| p.to_string()));
+        });
+    
+    // Wait for the callback to be called
+    let result = rx.recv().map_err(|e| format!("Dialog error: {}", e))?;
+    
+    Ok(result)
+}
+
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             detect_project,
             get_status,
             run_diagnostics,
             start_project,
             stop_project,
-            restart_project
+            restart_project,
+            select_directory
         ])
         .run(tauri::generate_context!())
         .expect("error while running the OpsPilot application");
