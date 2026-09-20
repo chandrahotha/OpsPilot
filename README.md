@@ -132,7 +132,7 @@ Re-check anytime: `npm run audit` (requires `cargo install cargo-audit` once).
 | 4 | Process lifecycle: start, stop, restart, status, logs, history, startup plans | ✅ **Done** |
 | 5 | Docker: containers, compose, start/stop/restart/logs | ✅ **Done** |
 | 6 | Database: Prisma/PostgreSQL, Django, Alembic (migrate/seed/reset + confirmations) | ✅ **Done** |
-| 7 | Ports: per-port process ownership, safe port changes | 📋 Planned |
+| 7 | Ports: per-port process ownership, safe port changes | ✅ **Done** |
 | 8 | Diagnostics: database/service reachability | 📋 Planned |
 | 9 | Logs: unified streaming UI | 📋 Planned |
 | 10 | AI layer (optional) | 📋 Planned |
@@ -175,7 +175,7 @@ MIT
 | **CLI** | ✅ **Done** | `pilot [path] [--json]` — human-readable or JSON output; declares every detected command |
 | **Dynamic GUI** | ✅ **Done** | Tauri + React; dashboard renders *only* detected capabilities |
 | **Service Status** | ✅ **Done** | Real TCP port observation; a service is "running" only when its port accepts connections |
-| **Port Management** | ✅ **Done** | Inspect, find-free-port (process ownership is next phase) |
+| **Port Management** | ✅ **Done** | Inspect, find-free-port, **process ownership (PID + name + command)**, safe port changes in project files |
 | **Deterministic Diagnostics** | ✅ **Done** | Runtimes, dependencies, environment — problem, evidence, cause, recommended action |
 | **Process Lifecycle** | ✅ **Done** | Start / Stop / Restart / Status / Logs / History — real processes, tree kill, log capture, operation history |
 | **Startup Plans** | ✅ **Done** | Detected capabilities + declared commands → ordered steps + validation + warnings |
