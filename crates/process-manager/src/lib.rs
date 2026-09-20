@@ -23,6 +23,7 @@ pub mod outcome;
 pub mod plan;
 pub mod platform;
 pub mod registry;
+pub mod unified_log;
 
 pub use history::{HistoryEntry, OperationHistory};
 pub use log_buffer::{LogBuffer, LogEntry, LogStream};
@@ -34,6 +35,7 @@ pub use plan::{
 };
 pub use platform::{current_platform, shell_command, stop_tree_command};
 pub use registry::{ProcessRecord, ProcessSnapshot, ProcessState};
+pub use unified_log::UnifiedLogStream;
 
 use serde::{Deserialize, Serialize};
 

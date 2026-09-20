@@ -133,8 +133,8 @@ Re-check anytime: `npm run audit` (requires `cargo install cargo-audit` once).
 | 5 | Docker: containers, compose, start/stop/restart/logs | ✅ **Done** |
 | 6 | Database: Prisma/PostgreSQL, Django, Alembic (migrate/seed/reset + confirmations) | ✅ **Done** |
 | 7 | Ports: per-port process ownership, safe port changes | ✅ **Done** |
-| 8 | Diagnostics: database/service reachability | 📋 Planned |
-| 9 | Logs: unified streaming UI | 📋 Planned |
+| 8 | Diagnostics: database/service reachability | ✅ **Done** |
+| 9 | Logs: unified streaming UI | ✅ **Done** |
 | 10 | AI layer (optional) | 📋 Planned |
 | 11 | Packaging: Windows/macOS/Linux installers, platform binary packages | 📋 Planned |
 | 12 | Release: npm publish, GitHub Releases | 📋 Planned |
@@ -176,8 +176,9 @@ MIT
 | **Dynamic GUI** | ✅ **Done** | Tauri + React; dashboard renders *only* detected capabilities |
 | **Service Status** | ✅ **Done** | Real TCP port observation; a service is "running" only when its port accepts connections |
 | **Port Management** | ✅ **Done** | Inspect, find-free-port, **process ownership (PID + name + command)**, safe port changes in project files |
-| **Deterministic Diagnostics** | ✅ **Done** | Runtimes, dependencies, environment — problem, evidence, cause, recommended action |
+| **Deterministic Diagnostics** | ✅ **Done** | Runtimes, dependencies, environment, **database reachability, service port reachability** — problem, evidence, cause, recommended action |
 | **Process Lifecycle** | ✅ **Done** | Start / Stop / Restart / Status / Logs / History — real processes, tree kill, log capture, operation history |
+| **Unified Log Streaming** | ✅ **Done** | **Real-time broadcast-based log aggregation** across all services with historical snapshots |
 | **Startup Plans** | ✅ **Done** | Detected capabilities + declared commands → ordered steps + validation + warnings |
 | **Docker Operations** | ✅ **Done** | Container list, start/stop/restart/logs, compose awareness |
 | **Database Operations** | ✅ **Done** | Migrate / seed / reset with destructive-operation confirmations (Prisma, Django, Alembic, PostgreSQL) |

@@ -7,7 +7,9 @@ license = "MIT"
 
 [dependencies]
 pilot-core = { path = "../core" }
+pilot-port-manager = { path = "../port-manager" }
 serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.39", features = ["net", "time", "rt-multi-thread"] }
 
 [dev-dependencies]
 serde_json = "1.0"
