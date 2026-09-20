@@ -149,28 +149,98 @@ section h3 {
   margin: 0.25rem 0;
 }
 
-.service-details button {
-  margin-top: 0.75rem;
-  padding: 0.5rem 1rem;
-  background: var(--primary);
-  color: white;
-  border: none;
-  border-radius: 0.5rem;
+/* Button Styles */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.25rem;
+  font-size: 0.875rem;
   font-weight: 500;
+  border-radius: 0.5rem;
+  border: none;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all 0.2s ease;
+  text-decoration: none;
+  white-space: nowrap;
 }
 
-.service-details button:hover {
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
   background: var(--primary-dark);
 }
 
-.actions {
-  margin-top: 1.5rem;
+.btn-secondary {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
 }
 
-.action-buttons {
+.btn-secondary:hover:not(:disabled) {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: white;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.btn-sm {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8125rem;
+}
+
+.select-dir-btn {
+  min-width: 140px;
+}
+
+.log-toggle {
+  min-width: 120px;
+}
+
+/* Header button layout */
+.header-right {
   display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.current-path {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  background: var(--surface);
+  padding: 0.375rem 0.75rem;
+  border-radius: 0.375rem;
+  border: 1px solid var(--border);
+  max-width: 300px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
   gap: 0.75rem;
   flex-wrap: wrap;
 }
@@ -277,7 +347,8 @@ section h3 {
 }
 
 .section-header button,
-.diagnostics button {
+.diagnostics button,
+.service-details button {
   padding: 0.5rem 1rem;
   background: var(--surface-hover);
   color: var(--text-primary);
@@ -289,7 +360,8 @@ section h3 {
 }
 
 .section-header button:hover,
-.diagnostics button:hover {
+.diagnostics button:hover,
+.service-details button:hover {
   background: var(--primary);
   border-color: var(--primary);
 }
