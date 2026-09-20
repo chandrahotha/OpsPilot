@@ -2288,6 +2288,12 @@ dependencies = [
 [[package]]
 name = "pilot-port-manager"
 version = "0.1.0"
+dependencies = [
+ "glob",
+ "regex",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "pilot-process-manager"

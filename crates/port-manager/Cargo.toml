@@ -2,5 +2,14 @@
 name = "pilot-port-manager"
 version = "0.1.0"
 edition = "2024"
+description = "Port detection, conflict handling, and process ownership"
+license = "MIT"
 
 [dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+regex = "1.10"
+glob = "0.3"
+
+[dev-dependencies]
+serde_json = "1.0"
