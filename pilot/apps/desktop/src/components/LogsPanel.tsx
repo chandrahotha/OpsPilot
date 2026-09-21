@@ -47,6 +47,24 @@ function dockerKey(name: string): string {
   return `docker:${name}`;
 }
 
+/**
+ * `docker logs --timestamps` prefixes each line with an RFC3339 timestamp.
+ * Parse it so the panel shows when lines really happened instead of
+ * stamping every line with the fetch time.
+ */
+const DOCKER_TIMESTAMP = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s([\s\S]*)$/;
+
+function dockerLogEntry(line: string, service: string, fallbackMs: number): LogEntry {
+  const match = DOCKER_TIMESTAMP.exec(line);
+  if (match) {
+    const parsed = Date.parse(match[1]);
+    if (!Number.isNaN(parsed)) {
+      return { timestampMs: parsed, service, stream: 'stdout', message: match[2] };
+    }
+  }
+  return { timestampMs: fallbackMs, service, stream: 'stdout', message: line };
+}
+
 export function LogsPanel({ events, projectName, focus }: LogsPanelProps) {
   const [processes, setProcesses] = useState<ProcessSnapshot[]>([]);
   const [containers, setContainers] = useState<ContainerStatus[]>([]);
@@ -58,31 +76,50 @@ export function LogsPanel({ events, projectName, focus }: LogsPanelProps) {
   const [stream, setStream] = useState<StreamFilter>('all');
   const [copied, setCopied] = useState(false);
   const logsRef = useRef<HTMLPreElement>(null);
+  /** Once the pilot has chosen a source (or cleared one), never override. */
+  const userTouched = useRef(false);
 
   const expected = expectedComposeProject(projectName);
 
   const refreshSources = useCallback(async () => {
+    let containersNow: ContainerStatus[] = [];
     try {
       const list = await api.listProcesses();
       setProcesses(list);
+      try {
+        const outcome = await api.listDockerContainers();
+        if ('containers' in outcome) {
+          containersNow = outcome.containers;
+          setContainers(outcome.containers);
+        }
+      } catch {
+        // Container sources are optional; Pilot processes keep working.
+      }
+      // Auto-connect: with no source chosen yet, select the first live
+      // process (Pilot's own first), else a running container, so the
+      // comms panel starts reporting instead of waiting for a manual pick.
+      if (!userTouched.current) {
+        setSelected((current) => {
+          if (current) {
+            return current;
+          }
+          const runningProcess = list.find((process) => process.state === 'Running');
+          if (runningProcess) {
+            return procKey(runningProcess.label);
+          }
+          if (list.length > 0) {
+            return procKey(list[0].label);
+          }
+          const runningContainer = containersNow.find((container) => container.running);
+          if (runningContainer) {
+            return dockerKey(runningContainer.name);
+          }
+          return '';
+        });
+      }
     } catch (err) {
       setMessage(toMessage(err));
-      return;
     }
-    try {
-      const outcome = await api.listDockerContainers();
-      if ('containers' in outcome) {
-        setContainers(outcome.containers);
-      }
-    } catch {
-      // Container sources are optional; Pilot processes keep working.
-    }
-    setSelected((current) => {
-      if (current) {
-        return current;
-      }
-      return '';
-    });
   }, []);
 
   const refreshLogs = useCallback(async () => {
@@ -98,7 +135,7 @@ export function LogsPanel({ events, projectName, focus }: LogsPanelProps) {
           setLogs(
             outcome.logs.output
               .split('\n')
-              .map((line) => ({ timestampMs: now, service: name, stream: 'stdout' as LogStream, message: line })),
+              .map((line) => dockerLogEntry(line, name, now)),
           );
           setMessage(null);
         } else {
@@ -131,6 +168,7 @@ export function LogsPanel({ events, projectName, focus }: LogsPanelProps) {
 
   useEffect(() => {
     if (focus) {
+      userTouched.current = true;
       setSelected(focus.key);
       setLogs([]);
       setPaused(false);
@@ -211,6 +249,7 @@ export function LogsPanel({ events, projectName, focus }: LogsPanelProps) {
               id="log-service"
               value={selected}
               onChange={(event) => {
+                userTouched.current = true;
                 setSelected(event.target.value);
                 setLogs([]);
               }}

@@ -218,6 +218,20 @@ function App() {
     }
   };
 
+  /**
+   * Force-stop the external process holding a service's port.
+   * Destructive on a process Pilot did not start, so it never runs without
+   * an explicit confirmation naming the service.
+   */
+  const stopExternal = (service: string) => {
+    const ok = window.confirm(
+      `Force-stop the external process holding ${service}? It was not started by Pilot and will be terminated immediately.`,
+    );
+    if (ok) {
+      void runServiceAction(service, 'Stopping…', () => api.stopExternalService(currentPath, service));
+    }
+  };
+
   const openFrontend = async () => {
     pushEvent('Opening frontend in browser', 'info');
     try {
@@ -392,6 +406,7 @@ function App() {
             onStopProject={(service) =>
               void runServiceAction(service, 'Stopping…', () => api.stopProject(service))
             }
+            onStopExternalProject={stopExternal}
             onRestartProject={(service) =>
               void runServiceAction(service, 'Restarting…', () => api.restartProject(service))
             }

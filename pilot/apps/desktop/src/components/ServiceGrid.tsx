@@ -17,8 +17,10 @@ interface ServiceGridProps {
   frontendUrl: string | null;
   onStart: (service: string) => void;
   onStop: (service: string) => void;
+  onStopExternal: (service: string) => void;
   onRestart: (service: string) => void;
   onOpenFrontend: () => void;
+  onServiceLogs: (service: string) => void;
 }
 
 const STATE_INDICATOR: Record<ServiceState, string> = {
@@ -47,7 +49,18 @@ function nonStartableHint(key: string): string {
   return 'No start command declared for this service.';
 }
 
-export function ServiceGrid({ services, startableKeys, busyServices, frontendUrl, onStart, onStop, onRestart, onOpenFrontend }: ServiceGridProps) {
+export function ServiceGrid({
+  services,
+  startableKeys,
+  busyServices,
+  frontendUrl,
+  onStart,
+  onStop,
+  onStopExternal,
+  onRestart,
+  onOpenFrontend,
+  onServiceLogs,
+}: ServiceGridProps) {
   if (services.length === 0) {
     return (
       <section className="services">
@@ -63,6 +76,10 @@ export function ServiceGrid({ services, startableKeys, busyServices, frontendUrl
       <div className="service-grid">
         {services.map((service) => {
           const busy = busyServices[service.key];
+          // A port is being held by something Pilot did not start: the
+          // engine-stop switch must reach it anyway.
+          const externalRunning = service.state === 'running' && service.pilotStarted === false;
+          const canStopExternal = externalRunning && service.ownerPid != null;
           return (
           <div className="service-card" key={service.key}>
             <div className="service-header">
@@ -87,21 +104,37 @@ export function ServiceGrid({ services, startableKeys, busyServices, frontendUrl
                 >
                   {busy === 'Starting…' ? 'Starting…' : 'Start'}
                 </button>
-                <button
-                  type="button"
-                  className={busy === 'Stopping…' ? 'btn-busy' : 'btn-stop'}
-                  onClick={() => onStop(service.key)}
-                  disabled={service.state === 'stopped' || busy !== undefined}
-                  title={`Stop ${service.label}`}
-                >
-                  {busy === 'Stopping…' ? 'Stopping…' : 'Stop'}
-                </button>
+                {canStopExternal ? (
+                  <button
+                    type="button"
+                    className={busy === 'Stopping…' ? 'btn-busy' : 'btn-stop'}
+                    onClick={() => onStopExternal(service.key)}
+                    disabled={busy !== undefined}
+                    title={`Force-stop ${service.ownerName ?? 'the external process'} (pid ${service.ownerPid}) holding port ${service.port}. It was not started by Pilot.`}
+                  >
+                    {busy === 'Stopping…' ? 'Stopping…' : 'Stop External'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className={busy === 'Stopping…' ? 'btn-busy' : 'btn-stop'}
+                    onClick={() => onStop(service.key)}
+                    disabled={service.state === 'stopped' || busy !== undefined || externalRunning}
+                    title={
+                      externalRunning
+                        ? 'Running outside Pilot, and the owning process could not be identified — stop it from the terminal you started it in'
+                        : `Stop ${service.label}`
+                    }
+                  >
+                    {busy === 'Stopping…' ? 'Stopping…' : 'Stop'}
+                  </button>
+                )}
                 <button
                   type="button"
                   className={busy === 'Restarting…' ? 'btn-busy' : 'btn-restart'}
                   onClick={() => onRestart(service.key)}
-                  disabled={busy !== undefined}
-                  title={`Restart ${service.label}`}
+                  disabled={busy !== undefined || externalRunning}
+                  title={externalRunning ? 'Only services started by Pilot can be restarted' : `Restart ${service.label}`}
                 >
                   {busy === 'Restarting…' ? 'Restarting…' : 'Restart'}
                 </button>
@@ -115,6 +148,14 @@ export function ServiceGrid({ services, startableKeys, busyServices, frontendUrl
                     Open
                   </button>
                 )}
+                <button
+                  type="button"
+                  disabled={busy !== undefined}
+                  onClick={() => onServiceLogs(service.key)}
+                  title={`Show ${service.label} output in Live logs`}
+                >
+                  Logs
+                </button>
               </div>
             ) : (
               <p className="hint">{nonStartableHint(service.key)}</p>

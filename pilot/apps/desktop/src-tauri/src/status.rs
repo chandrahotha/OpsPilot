@@ -36,6 +36,32 @@ pub struct ServiceStatus {
     pub state: ServiceState,
     /// Evidence explaining the state
     pub detail: String,
+    /// PID of the process holding the service port, when the port is occupied
+    /// and the owner could be identified
+    pub owner_pid: Option<u32>,
+    /// Name of the process holding the service port, when identified
+    pub owner_name: Option<String>,
+    /// True when Pilot's own process manager started the running process.
+    /// False means the port is held by something Pilot did not start (a
+    /// terminal, an IDE, or a previous session).
+    pub pilot_started: bool,
+}
+
+/// Human-readable PID for messages: `1234`, never `Some(1234)`.
+fn fmt_pid(pid: Option<u32>) -> String {
+    pid.map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Detail line for a port that is accepting connections, naming the owner
+/// so the pilot knows who is flying.
+fn running_detail(port: u16, pid: Option<u32>, name: Option<&str>) -> String {
+    match (pid, name) {
+        (Some(pid), Some(name)) => format!(
+            "port {port} is accepting connections; held by {name} (pid {pid}), which Pilot did not start"
+        ),
+        _ => format!("port {port} is accepting connections"),
+    }
 }
 
 impl ServiceStatus {
@@ -54,10 +80,13 @@ impl ServiceStatus {
                 ServiceState::Stopped
             },
             detail: if running {
-                format!("port {port} is accepting connections")
+                running_detail(port, status.pid, status.process.as_deref())
             } else {
                 format!("nothing is listening on port {port}")
             },
+            owner_pid: if running { status.pid } else { None },
+            owner_name: if running { status.process } else { None },
+            pilot_started: false,
         }
     }
 
@@ -69,6 +98,9 @@ impl ServiceStatus {
             port: None,
             state: ServiceState::Unknown,
             detail: detail.to_string(),
+            owner_pid: None,
+            owner_name: None,
+            pilot_started: false,
         }
     }
 }
@@ -172,24 +204,38 @@ fn overlay_tracked_state(services: &mut [ServiceStatus], project_path: &str) {
 
         match snapshot.state {
             ProcessState::Running => {
-                if service.state != ServiceState::Running {
-                    service.state = ServiceState::Running;
-                    service.detail = match service.port {
-                        Some(port) => format!(
-                            "started by Pilot (pid {:?}); port {port} is not accepting connections yet",
-                            snapshot.pid
-                        ),
-                        None => format!(
-                            "started by Pilot (pid {:?}); no port declared so the state comes from the process",
-                            snapshot.pid
-                        ),
-                    };
+                service.pilot_started = true;
+                let pid = fmt_pid(snapshot.pid);
+                match service.port {
+                    // The port is up and it is Pilot's own process: the
+                    // normal, healthy state after Start.
+                    Some(port) if service.state == ServiceState::Running => {
+                        service.detail = format!(
+                            "started by Pilot ({pid}); port {port} is accepting connections"
+                        );
+                    }
+                    // Tracked process is alive but the port is not accepting
+                    // yet (still booting, or a different port was detected).
+                    Some(port) => {
+                        service.state = ServiceState::Running;
+                        service.detail = format!(
+                            "started by Pilot ({pid}); port {port} is not accepting connections yet"
+                        );
+                    }
+                    None => {
+                        service.state = ServiceState::Running;
+                        service.detail = format!(
+                            "started by Pilot ({pid}); no port declared so the state comes from the process"
+                        );
+                    }
                 }
             }
             ProcessState::Exited | ProcessState::Failed => {
                 if service.state == ServiceState::Stopped {
-                    service.detail =
-                        format!("{}; Pilot-started process ended ({})", service.detail, snapshot.detail);
+                    service.detail = format!(
+                        "{}; Pilot-started process ended ({})",
+                        service.detail, snapshot.detail
+                    );
                 }
             }
             ProcessState::Stopped => {}
@@ -280,6 +326,42 @@ mod tests {
 
         assert_eq!(status.state, ServiceState::Stopped);
         assert!(status.detail.contains("nothing is listening"));
+        assert!(!status.pilot_started);
+        assert!(status.owner_pid.is_none());
+        assert!(status.owner_name.is_none());
+    }
+
+    #[test]
+    fn running_detail_names_the_process_holding_the_port() {
+        let with_owner = running_detail(3000, Some(4242), Some("node.exe"));
+        assert!(with_owner.contains("held by node.exe (pid 4242)"));
+        assert!(with_owner.contains("which Pilot did not start"));
+        assert!(with_owner.contains("accepting connections"));
+
+        let without_owner = running_detail(5432, None, None);
+        assert!(without_owner.contains("accepting connections"));
+        assert!(!without_owner.contains("held by"));
+    }
+
+    #[test]
+    fn an_external_listener_is_running_but_not_pilot_started() {
+        let _lock = port_lock();
+        let (_listener, port) = occupied_port();
+
+        let mut model = ProjectModel::new("demo", ".");
+        model.frontend = Some(FrontendInfo::new("vite", port));
+
+        let services = build_status(&model);
+        let frontend = services
+            .iter()
+            .find(|service| service.key == "frontend")
+            .expect("frontend must be reported");
+
+        // Something is listening, but Pilot did not start it: the pilot must
+        // be told that the flight is being flown by someone else.
+        assert_eq!(frontend.state, ServiceState::Running);
+        assert!(!frontend.pilot_started);
+        assert!(frontend.detail.contains("accepting connections"));
     }
 
     #[test]
@@ -318,6 +400,9 @@ mod tests {
 
         assert_eq!(json["key"], "docker");
         assert_eq!(json["state"], "unknown");
+        assert_eq!(json["pilotStarted"], false);
+        assert_eq!(json["ownerPid"], serde_json::Value::Null);
+        assert_eq!(json["ownerName"], serde_json::Value::Null);
     }
 
     /// A command that sleeps ~30s on any platform, so the test can observe
@@ -372,7 +457,13 @@ mod tests {
             .expect("frontend must be reported");
 
         assert_eq!(frontend.state, ServiceState::Running);
+        assert!(frontend.pilot_started);
         assert!(frontend.detail.contains("started by Pilot"));
+        assert!(
+            !frontend.detail.contains("pid Some("),
+            "no Rust debug syntax in the UI: {}",
+            frontend.detail
+        );
 
         let _ = manager.stop("frontend");
     }
@@ -412,6 +503,7 @@ mod tests {
             .expect("backend must be reported");
 
         assert_eq!(backend.state, ServiceState::Stopped);
+        assert!(!backend.pilot_started);
         assert!(!backend.detail.contains("started by Pilot"));
 
         let _ = manager.stop("backend");
@@ -422,9 +514,11 @@ mod tests {
         use pilot_core::CommandInfo;
 
         let mut model = ProjectModel::new("demo", ".");
-        model
-            .commands
-            .push(CommandInfo::new("start", "node server.js", "package.json scripts"));
+        model.commands.push(CommandInfo::new(
+            "start",
+            "node server.js",
+            "package.json scripts",
+        ));
 
         let services = build_status(&model);
 

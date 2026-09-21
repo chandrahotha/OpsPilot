@@ -15,8 +15,8 @@ use pilot_database::{
     IntegrationType,
 };
 use pilot_diagnostics::{DiagnosticsReport, run_diagnostics as run_engine_diagnostics};
-use pilot_docker::{DockerOutcome, compose_down, compose_up, execute as execute_docker};
 use pilot_docker::DockerOperation;
+use pilot_docker::{DockerOutcome, compose_down, compose_up, execute as execute_docker};
 use pilot_process_manager::{
     LocalProcessManager, LogEntry, ProcessManager, ProcessOutcome, ProcessRequest, ProcessState,
     build_startup_plan, validate_plan_ports, validate_step,
@@ -37,9 +37,11 @@ const PROJECT_PATH_ENV: &str = "PILOT_PROJECT_PATH";
 /// Order: explicit path (from the launcher) > PILOT_PROJECT_PATH > current
 /// directory, so cd my-project && pilot opens that project.
 fn resolve_project_path(path: Option<String>) -> Result<String, String> {
-    let requested = path
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| env::var(PROJECT_PATH_ENV).ok().filter(|value| !value.trim().is_empty()));
+    let requested = path.filter(|value| !value.trim().is_empty()).or_else(|| {
+        env::var(PROJECT_PATH_ENV)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    });
 
     let candidate = match requested {
         Some(value) => PathBuf::from(value),
@@ -79,9 +81,10 @@ fn get_status(path: Option<String>) -> Result<Vec<ServiceStatus>, String> {
 fn run_diagnostics(path: Option<String>) -> Result<DiagnosticsReport, String> {
     let path = resolve_project_path(path)?;
     let scan = scan_project(&path);
-    let model = scan.model().cloned().unwrap_or_else(|| {
-        ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path)
-    });
+    let model = scan
+        .model()
+        .cloned()
+        .unwrap_or_else(|| ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path));
     Ok(run_engine_diagnostics(&path, &model))
 }
 
@@ -90,16 +93,21 @@ fn run_diagnostics(path: Option<String>) -> Result<DiagnosticsReport, String> {
 fn get_startup_plan(path: Option<String>) -> Result<StartupPlanResponse, String> {
     let path = resolve_project_path(path)?;
     let scan = scan_project(&path);
-    let model = scan.model().cloned().unwrap_or_else(|| {
-        ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path)
-    });
+    let model = scan
+        .model()
+        .cloned()
+        .unwrap_or_else(|| ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path));
     let plan = build_startup_plan(&model, &path);
-    let steps: Vec<StartupStepResponse> = plan.steps.iter().map(|s| StartupStepResponse {
-        service: s.service.clone(),
-        description: s.description.clone(),
-        command: s.command.clone(),
-        working_directory: s.working_directory.clone(),
-    }).collect();
+    let steps: Vec<StartupStepResponse> = plan
+        .steps
+        .iter()
+        .map(|s| StartupStepResponse {
+            service: s.service.clone(),
+            description: s.description.clone(),
+            command: s.command.clone(),
+            working_directory: s.working_directory.clone(),
+        })
+        .collect();
     Ok(StartupPlanResponse {
         executable: plan.executable(),
         steps,
@@ -118,11 +126,15 @@ fn get_startup_plan(path: Option<String>) -> Result<StartupPlanResponse, String>
 fn start_project(path: Option<String>, service: String) -> Result<String, String> {
     let path = resolve_project_path(path)?;
     let scan = scan_project(&path);
-    let model = scan.model().cloned().unwrap_or_else(|| {
-        ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path)
-    });
+    let model = scan
+        .model()
+        .cloned()
+        .unwrap_or_else(|| ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path));
     let plan = build_startup_plan(&model, &path);
-    let step = plan.steps.iter().find(|s| s.service == service)
+    let step = plan
+        .steps
+        .iter()
+        .find(|s| s.service == service)
         .ok_or_else(|| {
             let mut message = format!("No startup step found for service '{service}'");
             if plan.steps.is_empty() {
@@ -161,8 +173,32 @@ fn start_project(path: Option<String>, service: String) -> Result<String, String
             ));
         }
     }
+    // Pre-flight: if the service port is held by a process Pilot did not
+    // start (a terminal, an IDE, a previous session), refuse now with the
+    // holder's name and the way out — instead of failing cryptically later.
+    if let Some(port) = declared_port(&model, &service) {
+        let probe = pilot_port_manager::inspect_port(port);
+        let ours = probe.pid.is_some_and(|pid| {
+            manager.list().into_iter().any(|snapshot| {
+                snapshot.state == ProcessState::Running
+                    && snapshot.working_directory.eq_ignore_ascii_case(&path)
+                    && snapshot.pid == Some(pid)
+            })
+        });
+        if !probe.available && !ours {
+            return Err(port_conflict_message(
+                &service,
+                port,
+                probe.pid,
+                probe.process.as_deref(),
+            ));
+        }
+    }
     match manager.start(&request) {
-        ProcessOutcome::Started(snapshot) => Ok(format!("Started {} (pid {:?})", snapshot.label, snapshot.pid)),
+        ProcessOutcome::Started(snapshot) => Ok(format!(
+            "Started {} (pid {:?})",
+            snapshot.label, snapshot.pid
+        )),
         ProcessOutcome::Error(e) => Err(format!(
             "Failed to start {} (command `{}` in `{}`): {e}",
             service, step.command, step.working_directory
@@ -171,13 +207,92 @@ fn start_project(path: Option<String>, service: String) -> Result<String, String
     }
 }
 
+/// Port a service key is expected to listen on, when the project declares one.
+///
+/// Used by the start pre-flight so a blocked start can name the real cause
+/// instead of failing later with a cryptic spawn error.
+fn declared_port(model: &ProjectModel, service: &str) -> Option<u16> {
+    match service {
+        "frontend" => model.frontend.as_ref().map(|info| info.port),
+        "backend" => model.backend.as_ref().map(|info| info.port),
+        "database" => model.database.as_ref().map(|info| info.port),
+        _ => None,
+    }
+}
+
+/// Pre-flight blocker for starting a service whose port is held by a
+/// process Pilot did not start.
+///
+/// The message names the holder and the two ways out, so the pilot never
+/// needs an emergency procedure to re-board.
+fn port_conflict_message(
+    service: &str,
+    port: u16,
+    pid: Option<u32>,
+    process: Option<&str>,
+) -> String {
+    match (pid, process) {
+        (Some(pid), Some(process)) => format!(
+            "Cannot start {service}: port {port} is already used by {process} (pid {pid}), \
+             which Pilot did not start. Use the Stop External button on the {service} card, \
+             or stop it in the terminal you started it from, then start again."
+        ),
+        _ => format!(
+            "Cannot start {service}: port {port} is already in use by a process Pilot \
+             could not identify. Free the port (or change it), then start again."
+        ),
+    }
+}
+
+/// Force-terminate a single PID (for processes Pilot did not start).
+fn kill_pid(pid: u32) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let output = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .creation_flags(0x0800_0000)
+            .output()
+            .map_err(|error| format!("could not run taskkill for pid {pid}: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "taskkill failed for pid {pid}: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ))
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let output = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .output()
+            .map_err(|error| format!("could not run kill for pid {pid}: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "kill failed for pid {pid}: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ))
+        }
+    }
+}
+
 /// Stop a project service (process lifecycle - phase 4)
 #[command]
 fn stop_project(service: String) -> Result<String, String> {
     let manager = get_process_manager();
     match manager.stop(&service) {
-        ProcessOutcome::Stopped(snapshot) => Ok(format!("Stopped {} ({})", snapshot.label, snapshot.detail)),
-        ProcessOutcome::NotFound(label) => Err(format!("Service {} not found or not started by Pilot", label)),
+        ProcessOutcome::Stopped(snapshot) => {
+            Ok(format!("Stopped {} ({})", snapshot.label, snapshot.detail))
+        }
+        ProcessOutcome::NotFound(label) => Err(format!(
+            "Service {} not found or not started by Pilot",
+            label
+        )),
         ProcessOutcome::Error(e) => Err(e),
         _ => Err("Unexpected outcome".to_string()),
     }
@@ -188,10 +303,94 @@ fn stop_project(service: String) -> Result<String, String> {
 fn restart_project(service: String) -> Result<String, String> {
     let manager = get_process_manager();
     match manager.restart(&service) {
-        ProcessOutcome::Started(snapshot) => Ok(format!("Restarted {} (pid {:?})", snapshot.label, snapshot.pid)),
-        ProcessOutcome::NotFound(label) => Err(format!("Service {} not found or not started by Pilot", label)),
+        ProcessOutcome::Started(snapshot) => Ok(format!(
+            "Restarted {} (pid {:?})",
+            snapshot.label, snapshot.pid
+        )),
+        ProcessOutcome::NotFound(label) => Err(format!(
+            "Service {} not found or not started by Pilot",
+            label
+        )),
         ProcessOutcome::Error(e) => Err(e),
         _ => Err("Unexpected outcome".to_string()),
+    }
+}
+
+/// Force-stop the external process holding a service's port.
+///
+/// This is the engine-stop switch for engines Pilot did not start: the
+/// service card shows the state, the GUI confirms, then this command
+/// re-identifies the holder right before killing it (a recycled PID can
+/// never make Pilot terminate the wrong process) and verifies the port is
+/// actually free afterwards.
+#[command]
+fn stop_external_service(path: Option<String>, service: String) -> Result<String, String> {
+    let path = resolve_project_path(path)?;
+    let scan = scan_project(&path);
+    let Some(model) = scan.model() else {
+        return Err(
+            "no project detected in this directory, so there is no service to stop".to_string(),
+        );
+    };
+
+    let statuses = build_status(model);
+    let status = statuses
+        .into_iter()
+        .find(|status| status.key == service)
+        .ok_or_else(|| format!("no service '{service}' was detected for this project"))?;
+    let port = status.port.ok_or_else(|| {
+        format!("service '{service}' declares no port, so Pilot cannot identify what holds it")
+    })?;
+
+    let probe = pilot_port_manager::inspect_port(port);
+    if probe.available {
+        return Ok(format!("port {port} is already free; nothing to stop"));
+    }
+    let pid = probe.pid.ok_or_else(|| {
+        format!(
+            "port {port} is occupied, but the process holding it could not be identified. \
+             Stop it from the terminal you started it in."
+        )
+    })?;
+    if pid == 0 || (cfg!(windows) && pid == 4) {
+        return Err(format!(
+            "refusing to stop the system process holding port {port}"
+        ));
+    }
+
+    // If Pilot actually tracks this PID (state said external, but the user
+    // started a same-named service through Pilot since), stop it gracefully
+    // through the process manager instead of a force-kill.
+    let manager = get_process_manager();
+    if let Some(tracked) = manager
+        .list()
+        .into_iter()
+        .find(|snapshot| snapshot.state == ProcessState::Running && snapshot.pid == Some(pid))
+    {
+        return match manager.stop(&tracked.label) {
+            ProcessOutcome::Stopped(stopped) => Ok(format!(
+                "stopped {} (Pilot-tracked, {})",
+                stopped.label, stopped.detail
+            )),
+            _ => Err(format!(
+                "could not stop Pilot-tracked process {}",
+                tracked.label
+            )),
+        };
+    }
+
+    kill_pid(pid)?;
+
+    // Give the OS a moment, then verify the engine really stopped.
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    let holder = probe.process.as_deref().unwrap_or("the external process");
+    if pilot_port_manager::is_listening(port) {
+        Ok(format!(
+            "stopped {holder} (pid {pid}), but port {port} is still occupied — \
+             a child process may hold it; check the card again in a moment"
+        ))
+    } else {
+        Ok(format!("stopped {holder} (pid {pid}); port {port} is free"))
     }
 }
 
@@ -220,16 +419,20 @@ fn get_process_status(service: String) -> Result<ProcessSnapshotResponse, String
 #[command]
 fn list_processes() -> Result<Vec<ProcessSnapshotResponse>, String> {
     let manager = get_process_manager();
-    Ok(manager.list().into_iter().map(|s| ProcessSnapshotResponse {
-        label: s.label,
-        command: s.command,
-        working_directory: s.working_directory,
-        pid: s.pid,
-        state: format!("{:?}", s.state),
-        detail: s.detail,
-        exit_code: s.exit_code,
-        started_at_ms: s.started_at_ms,
-    }).collect())
+    Ok(manager
+        .list()
+        .into_iter()
+        .map(|s| ProcessSnapshotResponse {
+            label: s.label,
+            command: s.command,
+            working_directory: s.working_directory,
+            pid: s.pid,
+            state: format!("{:?}", s.state),
+            detail: s.detail,
+            exit_code: s.exit_code,
+            started_at_ms: s.started_at_ms,
+        })
+        .collect())
 }
 
 /// Docker daemon status and CLI version (read-only probe).
@@ -295,7 +498,10 @@ fn parse_database_operation(operation: &str) -> Result<DatabaseOperation, String
 /// The ORM selects the integration (Prisma/Django/Alembic); without an ORM,
 /// a PostgreSQL database falls back to raw `psql`. Anything else reports
 /// `NotImplemented` with the reason instead of guessing commands.
-fn database_integration_for(model: &ProjectModel, path: &str) -> Result<DatabaseIntegration, DatabaseOutcome> {
+fn database_integration_for(
+    model: &ProjectModel,
+    path: &str,
+) -> Result<DatabaseIntegration, DatabaseOutcome> {
     let orm = model.orm.as_ref().map(|orm| orm.r#type.to_lowercase());
     let integration_type = match orm.as_deref() {
         Some("prisma") => IntegrationType::Prisma,
@@ -358,9 +564,10 @@ fn database_operation(
 ) -> Result<DatabaseOutcome, String> {
     let path = resolve_project_path(path)?;
     let scan = scan_project(&path);
-    let model = scan.model().cloned().unwrap_or_else(|| {
-        ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path)
-    });
+    let model = scan
+        .model()
+        .cloned()
+        .unwrap_or_else(|| ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path));
     let integration = database_integration_for(&model, &path).map_err(|outcome| {
         // Surface NotImplemented reasons as errors the GUI can display.
         match outcome {
@@ -430,9 +637,10 @@ fn system_health(path: Option<String>) -> Result<SystemHealth, String> {
     let path = resolve_project_path(path)?;
     let scan = scan_project(&path);
     let detected = scan.detected;
-    let model = scan.model().cloned().unwrap_or_else(|| {
-        ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path)
-    });
+    let model = scan
+        .model()
+        .cloned()
+        .unwrap_or_else(|| ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path));
 
     let manager = get_process_manager();
     let tracked_processes = manager.list().len();
@@ -448,7 +656,10 @@ fn system_health(path: Option<String>) -> Result<SystemHealth, String> {
                 command: step.command.clone(),
                 ready: blockers.is_empty(),
                 detail: if blockers.is_empty() {
-                    format!("{} (working directory `{}`)", step.description, step.working_directory)
+                    format!(
+                        "{} (working directory `{}`)",
+                        step.description, step.working_directory
+                    )
                 } else {
                     blockers.join("; ")
                 },
@@ -502,7 +713,10 @@ fn docker_summary(outcome: &DockerOutcome) -> String {
     match outcome {
         DockerOutcome::Status { available, version } => {
             if *available {
-                format!("daemon running ({})", version.as_deref().unwrap_or("unknown version"))
+                format!(
+                    "daemon running ({})",
+                    version.as_deref().unwrap_or("unknown version")
+                )
             } else {
                 "daemon not running".to_string()
             }
@@ -535,9 +749,10 @@ fn compose_ready() -> bool {
 fn start_all_project(path: Option<String>) -> Result<String, String> {
     let path = resolve_project_path(path)?;
     let scan = scan_project(&path);
-    let model = scan.model().cloned().unwrap_or_else(|| {
-        ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path)
-    });
+    let model = scan
+        .model()
+        .cloned()
+        .unwrap_or_else(|| ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path));
     let manager = get_process_manager();
     let mut lines: Vec<String> = Vec::new();
 
@@ -602,9 +817,10 @@ fn start_all_project(path: Option<String>) -> Result<String, String> {
 fn stop_all_project(path: Option<String>) -> Result<String, String> {
     let path = resolve_project_path(path)?;
     let scan = scan_project(&path);
-    let model = scan.model().cloned().unwrap_or_else(|| {
-        ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path)
-    });
+    let model = scan
+        .model()
+        .cloned()
+        .unwrap_or_else(|| ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path));
     let manager = get_process_manager();
     let mut lines: Vec<String> = Vec::new();
 
@@ -624,9 +840,7 @@ fn stop_all_project(path: Option<String>) -> Result<String, String> {
             ProcessOutcome::Stopped(stopped) => {
                 lines.push(format!("stopped {} ({})", stopped.label, stopped.detail))
             }
-            ProcessOutcome::NotFound(_) => {
-                lines.push(format!("{} already gone", snapshot.label))
-            }
+            ProcessOutcome::NotFound(_) => lines.push(format!("{} already gone", snapshot.label)),
             ProcessOutcome::Error(error) => {
                 lines.push(format!("{} failed to stop: {error}", snapshot.label))
             }
@@ -654,17 +868,24 @@ fn stop_all_project(path: Option<String>) -> Result<String, String> {
 fn run_script(path: Option<String>, name: String) -> Result<String, String> {
     let path = resolve_project_path(path)?;
     let scan = scan_project(&path);
-    let model = scan.model().cloned().unwrap_or_else(|| {
-        ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path)
-    });
+    let model = scan
+        .model()
+        .cloned()
+        .unwrap_or_else(|| ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path));
 
-    let declared = model.commands.iter().find(|command| command.name == name)
+    let declared = model
+        .commands
+        .iter()
+        .find(|command| command.name == name)
         .ok_or_else(|| {
             let available: Vec<&str> = model.commands.iter().map(|c| c.name.as_str()).collect();
             if available.is_empty() {
                 format!("no scripts are declared in this project, so '{name}' cannot run")
             } else {
-                format!("no script named '{name}' is declared; available: {}", available.join(", "))
+                format!(
+                    "no script named '{name}' is declared; available: {}",
+                    available.join(", ")
+                )
             }
         })?;
 
@@ -719,9 +940,7 @@ fn kill_all_project(path: Option<String>) -> Result<String, String> {
         match manager.kill(&snapshot.label) {
             ProcessOutcome::Stopped(_) => killed += 1,
             ProcessOutcome::NotFound(_) => gone += 1,
-            ProcessOutcome::Error(error) => {
-                failures.push(format!("{}: {error}", snapshot.label))
-            }
+            ProcessOutcome::Error(error) => failures.push(format!("{}: {error}", snapshot.label)),
             _ => failures.push(format!("{}: unexpected outcome", snapshot.label)),
         }
     }
@@ -795,9 +1014,10 @@ fn open_url_detached(url: &str) -> Result<(), String> {
 fn open_frontend(path: Option<String>) -> Result<String, String> {
     let path = resolve_project_path(path)?;
     let scan = scan_project(&path);
-    let model = scan.model().cloned().unwrap_or_else(|| {
-        ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path)
-    });
+    let model = scan
+        .model()
+        .cloned()
+        .unwrap_or_else(|| ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path));
 
     let frontend = model.frontend.as_ref().ok_or_else(|| {
         "no frontend was detected in this project, so there is nothing to open".to_string()
@@ -818,8 +1038,8 @@ fn open_frontend(path: Option<String>) -> Result<String, String> {
 /// Open a directory picker and return the selected path
 #[command]
 async fn select_directory(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
     use std::sync::mpsc;
+    use tauri_plugin_dialog::DialogExt;
     let (tx, rx) = mpsc::channel();
     app.dialog()
         .file()
@@ -880,6 +1100,7 @@ fn main() {
             get_startup_plan,
             start_project,
             stop_project,
+            stop_external_service,
             restart_project,
             start_all_project,
             stop_all_project,
@@ -899,4 +1120,43 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running the OpsPilot application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pilot_core::{BackendInfo, DatabaseInfo, FrontendInfo};
+
+    #[test]
+    fn declared_port_maps_service_keys_to_model_ports() {
+        let mut model = ProjectModel::new("demo", ".");
+        model.frontend = Some(FrontendInfo::new("vite", 3000));
+        model.backend = Some(BackendInfo::new("express", 4000));
+        model.database = Some(DatabaseInfo::new("postgresql", 5432));
+
+        assert_eq!(declared_port(&model, "frontend"), Some(3000));
+        assert_eq!(declared_port(&model, "backend"), Some(4000));
+        assert_eq!(declared_port(&model, "database"), Some(5432));
+        assert_eq!(declared_port(&model, "app"), None);
+        assert_eq!(declared_port(&model, "docker"), None);
+    }
+
+    #[test]
+    fn port_conflict_message_names_the_external_holder() {
+        let message = port_conflict_message("frontend", 3000, Some(4242), Some("node.exe"));
+
+        assert!(message.contains("Cannot start frontend"));
+        assert!(message.contains("port 3000"));
+        assert!(message.contains("node.exe (pid 4242)"));
+        assert!(message.contains("Stop External"));
+    }
+
+    #[test]
+    fn port_conflict_message_for_an_unidentified_holder_keeps_the_way_out() {
+        let message = port_conflict_message("backend", 4000, None, None);
+
+        assert!(message.contains("Cannot start backend"));
+        assert!(message.contains("could not identify"));
+        assert!(message.contains("then start again"));
+    }
 }

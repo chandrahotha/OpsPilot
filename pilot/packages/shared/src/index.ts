@@ -90,6 +90,12 @@ export interface ServiceStatus {
   port?: number | null;
   state: ServiceState;
   detail: string;
+  /** PID of the process holding the service port, when known */
+  ownerPid?: number | null;
+  /** Name of the process holding the service port, when known */
+  ownerName?: string | null;
+  /** True when Pilot's process manager started the running process; false means the port is held by something Pilot did not start */
+  pilotStarted?: boolean;
 }
 
 /** A single diagnostic check result */

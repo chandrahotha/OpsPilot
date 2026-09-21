@@ -57,6 +57,14 @@ export function stopProject(service: string): Promise<string> {
   return invoke<string>('stop_project', { service });
 }
 
+/**
+ * Force-stop the external process holding a service's port.
+ * The GUI confirms first: this terminates a process Pilot did not start.
+ */
+export function stopExternalService(path: string | undefined, service: string): Promise<string> {
+  return invoke<string>('stop_external_service', { path: path ?? null, service });
+}
+
 /** Restart a project service (process lifecycle - phase 4) */
 export function restartProject(service: string): Promise<string> {
   return invoke<string>('restart_project', { service });

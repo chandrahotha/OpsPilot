@@ -54,7 +54,10 @@ pub enum DockerOperation {
 #[serde(rename_all = "camelCase")]
 pub enum DockerOutcome {
     /// Docker daemon status
-    Status { available: bool, version: Option<String> },
+    Status {
+        available: bool,
+        version: Option<String>,
+    },
     /// List of containers
     Containers(Vec<ContainerStatus>),
     /// Operation succeeded, returns affected container names
@@ -62,9 +65,14 @@ pub enum DockerOutcome {
     Stopped(Vec<String>),
     Restarted(Vec<String>),
     /// Logs output
-    Logs { container: String, output: String },
+    Logs {
+        container: String,
+        output: String,
+    },
     /// Image rebuilt
-    Rebuilt { image: String },
+    Rebuilt {
+        image: String,
+    },
     /// Docker CLI is not available
     Unavailable(String),
     /// Operation failed with error
@@ -135,7 +143,10 @@ fn compose_value(json: &serde_json::Value, field: &str, label: &str) -> Option<S
                         .then(|| value.trim().to_string())
                 })
             } else if let Some(labels_map) = json["Labels"].as_object() {
-                labels_map.get(label).and_then(|v| v.as_str()).map(|v| v.to_string())
+                labels_map
+                    .get(label)
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.to_string())
             } else {
                 None
             }
@@ -205,14 +216,10 @@ pub fn start_container(name: &str) -> DockerOutcome {
         return DockerOutcome::Unavailable("Docker daemon is not running".to_string());
     }
 
-    let output = docker_command()
-        .args(["start", name])
-        .output();
+    let output = docker_command().args(["start", name]).output();
 
     match output {
-        Ok(output) if output.status.success() => {
-            DockerOutcome::Started(vec![name.to_string()])
-        }
+        Ok(output) if output.status.success() => DockerOutcome::Started(vec![name.to_string()]),
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             DockerOutcome::Error(format!("docker start {name} failed: {stderr}"))
@@ -227,14 +234,10 @@ pub fn stop_container(name: &str) -> DockerOutcome {
         return DockerOutcome::Unavailable("Docker daemon is not running".to_string());
     }
 
-    let output = docker_command()
-        .args(["stop", name])
-        .output();
+    let output = docker_command().args(["stop", name]).output();
 
     match output {
-        Ok(output) if output.status.success() => {
-            DockerOutcome::Stopped(vec![name.to_string()])
-        }
+        Ok(output) if output.status.success() => DockerOutcome::Stopped(vec![name.to_string()]),
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             DockerOutcome::Error(format!("docker stop {name} failed: {stderr}"))
@@ -249,14 +252,10 @@ pub fn restart_container(name: &str) -> DockerOutcome {
         return DockerOutcome::Unavailable("Docker daemon is not running".to_string());
     }
 
-    let output = docker_command()
-        .args(["restart", name])
-        .output();
+    let output = docker_command().args(["restart", name]).output();
 
     match output {
-        Ok(output) if output.status.success() => {
-            DockerOutcome::Restarted(vec![name.to_string()])
-        }
+        Ok(output) if output.status.success() => DockerOutcome::Restarted(vec![name.to_string()]),
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             DockerOutcome::Error(format!("docker restart {name} failed: {stderr}"))
@@ -265,15 +264,25 @@ pub fn restart_container(name: &str) -> DockerOutcome {
     }
 }
 
+/// Arguments for `docker logs`: bounded output, with real timestamps so the
+/// GUI never has to invent them.
+fn container_logs_args(name: &str) -> Vec<String> {
+    vec![
+        "logs".to_string(),
+        "--tail".to_string(),
+        "100".to_string(),
+        "--timestamps".to_string(),
+        name.to_string(),
+    ]
+}
+
 /// Get container logs
 pub fn container_logs(name: &str) -> DockerOutcome {
     if !docker_available() {
         return DockerOutcome::Unavailable("Docker daemon is not running".to_string());
     }
 
-    let output = docker_command()
-        .args(["logs", "--tail", "100", name])
-        .output();
+    let output = docker_command().args(container_logs_args(name)).output();
 
     match output {
         Ok(output) => {
@@ -308,11 +317,9 @@ pub fn rebuild_image(service: &str) -> DockerOutcome {
         .output();
 
     match output {
-        Ok(output) if output.status.success() => {
-            DockerOutcome::Rebuilt {
-                image: service.to_string(),
-            }
-        }
+        Ok(output) if output.status.success() => DockerOutcome::Rebuilt {
+            image: service.to_string(),
+        },
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             DockerOutcome::Error(format!("docker compose build {service} failed: {stderr}"))
@@ -455,6 +462,24 @@ mod tests {
         assert!(!containers[0].running);
         assert!(containers[0].ports.is_empty());
         assert!(containers[0].compose_project.is_none());
+    }
+
+    #[test]
+    fn container_logs_args_are_bounded_and_timestamped() {
+        let args = container_logs_args("vertex-db-1");
+
+        // Real timestamps so the GUI never has to invent them, bounded tail
+        // so a chatty container cannot flood the panel.
+        assert_eq!(
+            args,
+            vec![
+                "logs".to_string(),
+                "--tail".to_string(),
+                "100".to_string(),
+                "--timestamps".to_string(),
+                "vertex-db-1".to_string()
+            ]
+        );
     }
 
     #[test]

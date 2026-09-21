@@ -33,6 +33,7 @@ interface ProjectDashboardProps {
   events: ActivityEvent[];
   onStartProject: (service: string) => void;
   onStopProject: (service: string) => void;
+  onStopExternalProject: (service: string) => void;
   onRestartProject: (service: string) => void;
   onStartAll: () => void;
   onStopAll: () => void;
@@ -57,6 +58,7 @@ export function ProjectDashboard({
   events,
   onStartProject,
   onStopProject,
+  onStopExternalProject,
   onRestartProject,
   onStartAll,
   onStopAll,
@@ -71,6 +73,33 @@ export function ProjectDashboard({
   const hasStartable = (plan?.steps.length ?? 0) > 0;
   const [logFocus, setLogFocus] = useState<LogFocus | null>(null);
 
+  // Flight summary: what is running, and — critically — whose engines they are.
+  const running = services.filter((service) => service.state === 'running');
+  const pilotRunning = running.filter((service) => service.pilotStarted).length;
+  const externalRunning = running.length - pilotRunning;
+  const stoppedCount = services.filter((service) => service.state === 'stopped').length;
+  const unknownCount = services.filter((service) => service.state === 'unknown').length;
+  const composePresent = model.docker?.compose ?? false;
+  const canStopAll = bulkBusy === null && (running.length > 0 || composePresent);
+
+  // Next action: the cockpit tells the pilot what to do instead of leaving
+  // them to walk around the aircraft looking for controls.
+  const nextAction = (() => {
+    if (externalRunning > 0) {
+      return `${externalRunning} service${externalRunning > 1 ? 's are' : ' is'} running outside Pilot — stop ${externalRunning > 1 ? 'them' : 'it'} from ${externalRunning > 1 ? 'their' : 'its'} card before starting here.`;
+    }
+    if (running.length > 0 && stoppedCount === 0 && unknownCount === 0) {
+      return 'All engines running.';
+    }
+    if (running.length > 0) {
+      return `${running.length} of ${services.length} engine(s) running.`;
+    }
+    if (hasStartable) {
+      return 'All engines stopped. Press Start all, or start a single service below.';
+    }
+    return 'No startable services — check the plan notes below.';
+  })();
+
   return (
     <div className="dashboard">
       <header>
@@ -79,26 +108,23 @@ export function ProjectDashboard({
       </header>
 
       <div className="dashboard-main">
-        <ServiceGrid
-          services={services}
-          startableKeys={plan?.steps.map((step) => step.service) ?? []}
-          busyServices={busyServices}
-          frontendUrl={frontendUrl}
-          onStart={onStartProject}
-          onStop={onStopProject}
-          onRestart={onRestartProject}
-          onOpenFrontend={onOpenFrontend}
-        />
-
-        <StartupPlanPanel plan={plan} busyServices={busyServices} onStart={onStartProject} />
-
-        <section className="actions">
+        <section className="cockpit-bar">
+          <div className="flight-summary">
+            <span className="chip chip-running">{running.length} running</span>
+            {externalRunning > 0 && (
+              <span className="chip chip-external">{externalRunning} external</span>
+            )}
+            <span className="chip chip-stopped">{stoppedCount} stopped</span>
+            {unknownCount > 0 && <span className="chip chip-unknown">{unknownCount} unknown</span>}
+          </div>
+          <p className="next-action">{nextAction}</p>
           <div className="action-buttons">
             <button
               type="button"
               className="btn-start"
               onClick={onStartAll}
               disabled={!hasStartable || bulkBusy !== null}
+              title={hasStartable ? 'Start the compose stack, then every plan step, in order' : 'No startable services were detected'}
             >
               {bulkBusy ?? 'Start all'}
             </button>
@@ -106,7 +132,8 @@ export function ProjectDashboard({
               type="button"
               className="btn-stop"
               onClick={onStopAll}
-              disabled={bulkBusy !== null}
+              disabled={!canStopAll}
+              title={canStopAll ? 'Stop everything Pilot started for this project, then bring the compose stack down' : 'Nothing is running that Pilot can stop'}
             >
               {bulkBusy ?? 'Stop all'}
             </button>
@@ -119,7 +146,7 @@ export function ProjectDashboard({
             >
               Kill All Nodes
             </button>
-            <button type="button" onClick={onRunDiagnostics}>
+            <button type="button" onClick={onRunDiagnostics} title="Run the deterministic diagnostics checks">
               Diagnostics
             </button>
             <button type="button" onClick={onRescan} title="Re-scan the project directory">
@@ -130,15 +157,30 @@ export function ProjectDashboard({
           {message && <pre className="banner banner-pre">{message}</pre>}
         </section>
 
-      {showDocker && (
-        <DockerPanel
-          projectPath={projectPath}
-          projectName={model.project.name}
-          hasCompose={model.docker?.compose ?? false}
-          onEvent={onEvent}
-          onViewLogs={(name) => setLogFocus({ key: `docker:${name}`, ts: Date.now() })}
+        <ServiceGrid
+          services={services}
+          startableKeys={plan?.steps.map((step) => step.service) ?? []}
+          busyServices={busyServices}
+          frontendUrl={frontendUrl}
+          onStart={onStartProject}
+          onStop={onStopProject}
+          onStopExternal={onStopExternalProject}
+          onRestart={onRestartProject}
+          onOpenFrontend={onOpenFrontend}
+          onServiceLogs={(service) => setLogFocus({ key: `proc:${service}`, ts: Date.now() })}
         />
-      )}
+
+        <StartupPlanPanel plan={plan} busyServices={busyServices} onStart={onStartProject} />
+
+        {showDocker && (
+          <DockerPanel
+            projectPath={projectPath}
+            projectName={model.project.name}
+            hasCompose={model.docker?.compose ?? false}
+            onEvent={onEvent}
+            onViewLogs={(name) => setLogFocus({ key: `docker:${name}`, ts: Date.now() })}
+          />
+        )}
 
         {showDatabase && (
           <DatabasePanel
