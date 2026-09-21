@@ -147,7 +147,8 @@ export function LogsPanel({ events, projectName, focus }: LogsPanelProps) {
     if (!container.composeProject) {
       return true;
     }
-    return container.composeProject.toLowerCase().replace(/[^a-z0-9]/g, '') !== expected;
+    const normalized = container.composeProject.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    return normalized !== expected;
   };
 
   const selectedLabel = (() => {

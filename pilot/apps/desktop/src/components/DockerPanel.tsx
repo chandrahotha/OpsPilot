@@ -27,15 +27,16 @@ interface DockerPanelProps {
 
 /**
  * Expected compose project name for a directory: Docker Compose defaults to
- * the lowercased directory basename with anything outside [a-z0-9] removed.
+ * the lowercased directory basename. Valid project names are lowercase letters,
+ * digits, dashes and underscores.
  */
 export function expectedComposeProject(projectPath: string): string {
   const base = projectPath.split(/[\\/]/).filter((part) => part.length > 0).pop() ?? '';
-  return base.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return base.toLowerCase().replace(/[^a-z0-9_-]/g, '');
 }
 
 function normalizeProject(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return value.toLowerCase().replace(/[^a-z0-9_-]/g, '');
 }
 
 function belongsToProject(container: ContainerStatus, expected: string): boolean {

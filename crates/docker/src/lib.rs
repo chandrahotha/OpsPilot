@@ -127,13 +127,18 @@ fn compose_value(json: &serde_json::Value, field: &str, label: &str) -> Option<S
         .filter(|value| !value.is_empty())
         .map(|value| value.to_string())
         .or_else(|| {
-            json["Labels"].as_str().and_then(|labels| {
-                labels.split(',').find_map(|pair| {
+            // Labels may be a comma-separated string (docker ps --format json) or a map (inspect).
+            if let Some(labels_str) = json["Labels"].as_str() {
+                labels_str.split(',').find_map(|pair| {
                     let (key, value) = pair.split_once('=')?;
                     (key.trim() == label && !value.trim().is_empty())
                         .then(|| value.trim().to_string())
                 })
-            })
+            } else if let Some(labels_map) = json["Labels"].as_object() {
+                labels_map.get(label).and_then(|v| v.as_str()).map(|v| v.to_string())
+            } else {
+                None
+            }
         })
 }
 
