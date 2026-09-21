@@ -154,10 +154,18 @@ pub fn run_diagnostics(project_path: &str, model: &ProjectModel) -> DiagnosticsR
 
     // Check service ports (frontend/backend) if they are configured
     if let Some(frontend) = &model.frontend {
-        checks.push(service_reachability_check("frontend", frontend.port, "Frontend"));
+        checks.push(service_reachability_check(
+            "frontend",
+            frontend.port,
+            "Frontend",
+        ));
     }
     if let Some(backend) = &model.backend {
-        checks.push(service_reachability_check("backend", backend.port, "Backend"));
+        checks.push(service_reachability_check(
+            "backend",
+            backend.port,
+            "Backend",
+        ));
     }
 
     DiagnosticsReport::new(checks)
@@ -255,12 +263,17 @@ fn database_reachability_check(db: &DatabaseInfo) -> DiagnosticResult {
         )
         .with_cause("the database server is not running or is listening on a different port")
     } else {
-        let process = status.process.unwrap_or_else(|| "unknown process".to_string());
+        let process = status
+            .process
+            .unwrap_or_else(|| "unknown process".to_string());
         let pid = status.pid.unwrap_or(0);
         DiagnosticResult::passed(
             "database-reachability",
             "Database Reachability",
-            format!("database port {} is listening (PID {}: {})", port, pid, process),
+            format!(
+                "database port {} is listening (PID {}: {})",
+                port, pid, process
+            ),
         )
     }
 }
@@ -276,17 +289,69 @@ fn service_reachability_check(service_type: &str, port: u16, label: &str) -> Dia
             format!("{} Reachability", label),
             format!("{} port {} is not listening", label, port),
             format!("port {} is available (no process listening)", port),
-            format!("Start the {} service or verify the port configuration.", label),
+            format!(
+                "Start the {} service or verify the port configuration.",
+                label
+            ),
         )
-        .with_cause(format!("the {} server is not running or is listening on a different port", service_type))
+        .with_cause(format!(
+            "the {} server is not running or is listening on a different port",
+            service_type
+        ))
     } else {
-        let process = status.process.unwrap_or_else(|| "unknown process".to_string());
+        let process = status
+            .process
+            .unwrap_or_else(|| "unknown process".to_string());
         let pid = status.pid.unwrap_or(0);
         DiagnosticResult::passed(
             format!("{}-reachability", service_type),
             format!("{} Reachability", label),
-            format!("{} port {} is listening (PID {}: {})", label, port, pid, process),
+            format!(
+                "{} port {} is listening (PID {}: {})",
+                label, port, pid, process
+            ),
         )
+    }
+}
+
+/// Ask a tool for its version, returning the first line of output on success
+pub fn tool_version(tool: &str) -> Option<String> {
+    let output = command_for(tool).output().ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let version = stdout.lines().next().unwrap_or_default().trim().to_string();
+
+    (!version.is_empty()).then_some(version)
+}
+
+/// Whether a tool can be executed at all (read-only probe)
+///
+/// Used by the operation layer before it plans a startup step.
+pub fn tool_available(tool: &str) -> bool {
+    tool_version(tool).is_some()
+}
+
+/// Build a `--version` probe for a tool, handling Windows shims such as `npm.cmd`
+fn command_for(tool: &str) -> Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut command = Command::new("cmd");
+        command.args(["/C", tool, "--version"]);
+        // Probes run on every diagnostics pass and validation; never flash a console.
+        command.creation_flags(0x0800_0000);
+        command
+    }
+
+    #[cfg(not(windows))]
+    {
+        let mut command = Command::new(tool);
+        command.arg("--version");
+        command
     }
 }
 
@@ -336,7 +401,11 @@ mod tests {
         let check = dependencies_check(".", &model);
 
         assert!(check.passed);
-        assert!(check.evidence.is_some_and(|text| text.contains("not required")));
+        assert!(
+            check
+                .evidence
+                .is_some_and(|text| text.contains("not required"))
+        );
     }
 
     #[test]
@@ -379,45 +448,5 @@ mod tests {
         assert_eq!(json["checks"][0]["id"], "docker-runtime");
         assert_eq!(json["checks"][0]["passed"], false);
         assert!(json["checks"][0]["recommendedAction"].is_string());
-    }
-}
-/// Ask a tool for its version, returning the first line of output on success
-pub fn tool_version(tool: &str) -> Option<String> {
-    let output = command_for(tool).output().ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let version = stdout.lines().next().unwrap_or_default().trim().to_string();
-
-    (!version.is_empty()).then_some(version)
-}
-
-/// Whether a tool can be executed at all (read-only probe)
-///
-/// Used by the operation layer before it plans a startup step.
-pub fn tool_available(tool: &str) -> bool {
-    tool_version(tool).is_some()
-}
-
-/// Build a `--version` probe for a tool, handling Windows shims such as `npm.cmd`
-fn command_for(tool: &str) -> Command {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        let mut command = Command::new("cmd");
-        command.args(["/C", tool, "--version"]);
-        // Probes run on every diagnostics pass and validation; never flash a console.
-        command.creation_flags(0x0800_0000);
-        command
-    }
-
-    #[cfg(not(windows))]
-    {
-        let mut command = Command::new(tool);
-        command.arg("--version");
-        command
     }
 }

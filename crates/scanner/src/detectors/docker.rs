@@ -1,6 +1,6 @@
 //! Docker detection: Dockerfile, Compose files and the services they declare.
 
-use crate::{exists, read_text, Detector};
+use crate::{Detector, exists, read_text};
 use pilot_core::{DatabaseInfo, ProjectModel};
 
 /// Compose files recognized by Pilot. A single `compose.yml` is a Docker Compose v2 file.
@@ -47,9 +47,7 @@ impl Detector for DockerComposeDetector {
     }
 
     fn detect(&self, project_path: &str) -> bool {
-        COMPOSE_FILES
-            .iter()
-            .any(|file| exists(project_path, file))
+        COMPOSE_FILES.iter().any(|file| exists(project_path, file))
     }
 
     fn apply(&self, project_path: &str, model: &mut ProjectModel) -> Vec<String> {

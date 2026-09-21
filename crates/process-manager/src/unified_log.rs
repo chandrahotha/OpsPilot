@@ -6,7 +6,7 @@
 use crate::log_buffer::{LogBuffer, LogEntry, LogStream};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 
 /// Unified log stream that aggregates logs from all services and supports
 /// real-time streaming via broadcast channels.
@@ -36,11 +36,15 @@ impl UnifiedLogStream {
         let mut buffers = self.buffers.write().await;
         buffers
             .entry(service.to_string())
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(LogBuffer::new(self.default_capacity))))
+            .or_insert_with(|| {
+                Arc::new(tokio::sync::Mutex::new(LogBuffer::new(
+                    self.default_capacity,
+                )))
+            })
             .clone()
     }
 
-/// Push a log entry to the stream (broadcasts to all subscribers and stores in buffer)
+    /// Push a log entry to the stream (broadcasts to all subscribers and stores in buffer)
     pub async fn push(&self, entry: LogEntry) {
         let service = entry.service.clone();
         let buffer = self.get_or_create_buffer(&service).await;
@@ -123,8 +127,12 @@ mod tests {
         let stream = UnifiedLogStream::new(100);
         let mut rx = stream.subscribe();
 
-        stream.push_output("frontend", LogStream::Stdout, "hello").await;
-        stream.push_output("backend", LogStream::Stderr, "world").await;
+        stream
+            .push_output("frontend", LogStream::Stdout, "hello")
+            .await;
+        stream
+            .push_output("backend", LogStream::Stderr, "world")
+            .await;
 
         let first = rx.recv().await.expect("should receive first entry");
         assert_eq!(first.service, "frontend");
@@ -141,7 +149,9 @@ mod tests {
         let mut rx1 = stream.subscribe();
         let mut rx2 = stream.subscribe();
 
-        stream.push_output("test", LogStream::Stdout, "broadcast").await;
+        stream
+            .push_output("test", LogStream::Stdout, "broadcast")
+            .await;
 
         let entry1 = rx1.recv().await.expect("rx1 should receive");
         let entry2 = rx2.recv().await.expect("rx2 should receive");
@@ -166,9 +176,15 @@ mod tests {
     async fn snapshot_returns_recent_logs() {
         let stream = UnifiedLogStream::new(100);
 
-        stream.push_output("frontend", LogStream::Stdout, "first").await;
-        stream.push_output("frontend", LogStream::Stdout, "second").await;
-        stream.push_output("backend", LogStream::Stdout, "third").await;
+        stream
+            .push_output("frontend", LogStream::Stdout, "first")
+            .await;
+        stream
+            .push_output("frontend", LogStream::Stdout, "second")
+            .await;
+        stream
+            .push_output("backend", LogStream::Stdout, "third")
+            .await;
 
         let frontend_logs = stream.snapshot("frontend", None).await;
         assert_eq!(frontend_logs.len(), 2);
@@ -184,7 +200,9 @@ mod tests {
         let stream = UnifiedLogStream::new(100);
 
         for i in 0..10 {
-            stream.push_output("test", LogStream::Stdout, i.to_string()).await;
+            stream
+                .push_output("test", LogStream::Stdout, i.to_string())
+                .await;
         }
 
         let limited = stream.snapshot("test", Some(3)).await;
@@ -197,8 +215,12 @@ mod tests {
     async fn clear_service_removes_logs() {
         let stream = UnifiedLogStream::new(100);
 
-        stream.push_output("frontend", LogStream::Stdout, "keep").await;
-        stream.push_output("backend", LogStream::Stdout, "remove").await;
+        stream
+            .push_output("frontend", LogStream::Stdout, "keep")
+            .await;
+        stream
+            .push_output("backend", LogStream::Stdout, "remove")
+            .await;
 
         stream.clear_service("backend").await;
 

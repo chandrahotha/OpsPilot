@@ -128,7 +128,11 @@ pub struct CommandInfo {
 
 impl CommandInfo {
     /// Create command information
-    pub fn new(name: impl Into<String>, command: impl Into<String>, source: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        command: impl Into<String>,
+        source: impl Into<String>,
+    ) -> Self {
         CommandInfo {
             name: name.into(),
             command: command.into(),
@@ -246,7 +250,11 @@ mod tests {
             orm: Some(OrmInfo::new("prisma")),
             docker: Some(DockerInfo::new(true, true)),
             environment: Some(EnvironmentInfo::new(true, true, false)),
-            commands: vec![CommandInfo::new("dev", "npm run dev", "package.json scripts")],
+            commands: vec![CommandInfo::new(
+                "dev",
+                "npm run dev",
+                "package.json scripts",
+            )],
         }
     }
 

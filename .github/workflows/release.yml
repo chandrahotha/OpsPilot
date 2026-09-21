@@ -93,7 +93,8 @@ jobs:
             target/
           key: ${{ runner.os }}-tauri-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Install npm dependencies
-        working-directory: pilot/apps/desktop
+        # The lockfile lives at the repo root and covers all workspaces;
+        # `npm ci` must run where the lockfile is, never in a subpackage.
         run: npm ci
       - name: Build Tauri app
         working-directory: pilot/apps/desktop
@@ -190,6 +191,10 @@ jobs:
         run: npm ci
       - name: Build workspace
         run: npm run build
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint (clippy, warnings deny)
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Run tests
         run: npm test
       - name: Pack npm package
@@ -272,19 +277,24 @@ jobs:
         with:
           name: ops-pilot-npm
           path: npm-package
+      - name: Download platform packages
+        uses: actions/download-artifact@v4
+        with:
+          name: platform-packages
+          path: platform-artifact
       - name: Publish main CLI package
         run: |
-          cd pilot/packages/cli
-          npm publish ../*.tgz --access public
+          TARBALL="$(find npm-package -name 'ops-pilot-*.tgz' | head -n 1)"
+          if [ -z "$TARBALL" ]; then echo "no packed tarball found"; find npm-package -type f | head -n 20; exit 1; fi
+          npm publish "$TARBALL" --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish platform packages
         run: |
-          for pkg in ../platform-packages/*/; do
-            if [ -f "$pkg/package.json" ]; then
-              echo "Publishing $(basename $pkg)..."
-              npm publish "$pkg" --access public
-            fi
+          test -n "$(find platform-artifact -name package.json | head -n 1)" || { echo "no platform packages found"; find platform-artifact -type f | head -n 20; exit 1; }
+          find platform-artifact -name package.json -exec dirname {} \; | while IFS= read -r pkg; do
+            echo "Publishing $pkg..."
+            npm publish "$pkg" --access public
           done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

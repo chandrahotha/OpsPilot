@@ -181,13 +181,16 @@ export interface LogEntry {
   message: string;
 }
 
+/** Lifecycle state of a process tracked by Pilot (mirrors the engine enum) */
+export type ProcessLifecycleState = 'running' | 'stopped' | 'exited' | 'failed';
+
 /** Snapshot of a process tracked by Pilot */
 export interface ProcessSnapshot {
   label: string;
   command: string;
   workingDirectory: string;
   pid?: number | null;
-  state: string;
+  state: ProcessLifecycleState;
   detail: string;
   exitCode?: number | null;
   startedAtMs?: number | null;

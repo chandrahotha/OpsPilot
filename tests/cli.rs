@@ -18,7 +18,8 @@ struct Fixture {
 impl Fixture {
     fn new(name: &str) -> Self {
         let unique = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir().join(format!("pilot-cli-{name}-{}-{unique}", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("pilot-cli-{name}-{}-{unique}", std::process::id()));
 
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("fixture directory must be created");
@@ -84,10 +85,7 @@ fn reports_an_empty_directory_without_failing() {
 fn prints_a_human_readable_summary() {
     let fixture = Fixture::new("summary");
     fixture
-        .file(
-            "manage.py",
-            "import django\n",
-        )
+        .file("manage.py", "import django\n")
         .file("requirements.txt", "Django==5.0\n");
 
     let output = run(&[&fixture.path_str()]);

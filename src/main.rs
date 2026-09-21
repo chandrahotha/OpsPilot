@@ -116,7 +116,11 @@ fn print_report(result: &ScanResult, path: &str) {
         println!("  {:<12} {}", "ORM", orm.r#type);
     }
     if let Some(docker) = &model.docker {
-        let kind = if docker.compose { "compose" } else { "dockerfile" };
+        let kind = if docker.compose {
+            "compose"
+        } else {
+            "dockerfile"
+        };
 
         println!("  {:<12} detected ({kind})", "Docker");
     }

@@ -47,10 +47,7 @@ pub fn stop_tree_command(pid: u32) -> Command {
     #[cfg(windows)]
     {
         let mut stop = Command::new("taskkill");
-        stop.arg("/PID")
-            .arg(pid.to_string())
-            .arg("/T")
-            .arg("/F");
+        stop.arg("/PID").arg(pid.to_string()).arg("/T").arg("/F");
         hide_window(&mut stop);
         stop
     }
@@ -73,10 +70,7 @@ pub fn kill_tree_command(pid: u32) -> Command {
     #[cfg(windows)]
     {
         let mut kill = Command::new("taskkill");
-        kill.arg("/PID")
-            .arg(pid.to_string())
-            .arg("/T")
-            .arg("/F");
+        kill.arg("/PID").arg(pid.to_string()).arg("/T").arg("/F");
         hide_window(&mut kill);
         kill
     }

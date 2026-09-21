@@ -4,8 +4,8 @@
 //! is its serializable view. Pilot only ever tracks processes it started itself
 //! (spec section 11).
 
-use crate::log_buffer::{LogBuffer, now_ms};
 use crate::ProcessRequest;
+use crate::log_buffer::{LogBuffer, now_ms};
 use serde::Serialize;
 use std::process::{Child, ChildStderr, ChildStdout};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -186,7 +186,10 @@ impl ProcessRecord {
         let running = self.is_running();
         let detail = match state {
             ProcessState::Running => {
-                format!("started by Pilot on {}", crate::platform::current_platform())
+                format!(
+                    "started by Pilot on {}",
+                    crate::platform::current_platform()
+                )
             }
             ProcessState::Stopped => "stopped by Pilot".to_string(),
             ProcessState::Exited => match self.exit_code() {

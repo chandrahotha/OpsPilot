@@ -1,6 +1,6 @@
 //! Prisma detection: ORM presence and datasource provider.
 
-use crate::{exists, read_text, Detector};
+use crate::{Detector, exists, read_text};
 use pilot_core::{DatabaseInfo, OrmInfo, ProjectModel};
 
 /// Prisma datasource providers mapped to the normalized database model.
@@ -144,7 +144,8 @@ mod tests {
 
     #[test]
     fn reads_the_provider_from_a_multiline_schema() {
-        let schema = "datasource db {\n  provider = \"postgresql\"\n  url      = env(\"DATABASE_URL\")\n}\n";
+        let schema =
+            "datasource db {\n  provider = \"postgresql\"\n  url      = env(\"DATABASE_URL\")\n}\n";
 
         assert_eq!(provider_from_schema(schema).as_deref(), Some("postgresql"));
     }
@@ -158,7 +159,10 @@ mod tests {
 
     #[test]
     fn ignores_schemas_without_a_provider() {
-        assert_eq!(provider_from_schema("model User {\n  id Int @id\n}\n"), None);
+        assert_eq!(
+            provider_from_schema("model User {\n  id Int @id\n}\n"),
+            None
+        );
     }
 
     #[test]

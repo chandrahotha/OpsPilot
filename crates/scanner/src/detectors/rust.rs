@@ -4,7 +4,7 @@
 //! no Rust section, and a Cargo project does not by itself define an application
 //! port. This detector exists so the toolchain is visible in diagnostics.
 
-use crate::{exists, Detector};
+use crate::{Detector, exists};
 use pilot_core::ProjectModel;
 
 /// Detect a Cargo (Rust) project

@@ -73,7 +73,12 @@ pub enum PortOperation {
     /// Inspect a port to see if it's in use and by whom
     InspectPort(u16),
     /// Change a port configuration in project files
-    ChangePort { from: u16, to: u16, #[serde(rename = "projectDir")] project_dir: String },
+    ChangePort {
+        from: u16,
+        to: u16,
+        #[serde(rename = "projectDir")]
+        project_dir: String,
+    },
 }
 
 /// Outcome of a port operation
@@ -85,7 +90,12 @@ pub enum PortOutcome {
     /// A free port was found
     FreePort(u16),
     /// Port change completed with list of modified files
-    Changed { from: u16, to: u16, #[serde(rename = "modifiedFiles")] modified_files: Vec<String> },
+    Changed {
+        from: u16,
+        to: u16,
+        #[serde(rename = "modifiedFiles")]
+        modified_files: Vec<String>,
+    },
     /// The operation is not implemented yet
     NotImplemented(&'static str),
     /// Operation failed with error
@@ -146,9 +156,10 @@ impl PortManager {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let pid_regex = Regex::new(r"\s+(\d+)\s*$").ok()?;
-        
+
         for line in stdout.lines() {
-            if line.contains(&format!(":{}", port)) && (line.contains("TCP") || line.contains("UDP"))
+            if line.contains(&format!(":{}", port))
+                && (line.contains("TCP") || line.contains("UDP"))
                 && let Some(caps) = pid_regex.captures(line)
                 && let Ok(pid) = caps.get(1).unwrap().as_str().parse::<u32>()
                 && let Some(owner) = self.get_process_info_windows(pid)
@@ -175,10 +186,16 @@ impl PortManager {
             if let Some(name) = line.split(',').next() {
                 let name = name.trim_matches('"');
                 let cmd_output = silent_command("cmd")
-                    .args(["/C", &format!("wmic process where ProcessId={} get CommandLine /format:list", pid)])
+                    .args([
+                        "/C",
+                        &format!(
+                            "wmic process where ProcessId={} get CommandLine /format:list",
+                            pid
+                        ),
+                    ])
                     .output()
                     .ok()?;
-                
+
                 let cmd_stdout = String::from_utf8_lossy(&cmd_output.stdout);
                 let command = cmd_stdout
                     .lines()
@@ -200,10 +217,7 @@ impl PortManager {
     /// Linux: Use ss and /proc
     #[cfg(target_os = "linux")]
     fn get_port_owner_linux(&self, port: u16) -> Option<ProcessOwner> {
-        let output = Command::new("ss")
-            .args(["-tlnp"])
-            .output()
-            .ok()?;
+        let output = Command::new("ss").args(["-tlnp"]).output().ok()?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let port_pattern = format!(":{}", port);
@@ -212,19 +226,21 @@ impl PortManager {
 
         for line in stdout.lines() {
             if line.contains(&port_pattern) {
-                let pid = pid_regex.captures(line)
+                let pid = pid_regex
+                    .captures(line)
                     .and_then(|c| c.get(1))
                     .and_then(|m| m.as_str().parse::<u32>().ok())?;
-                
-                let name = comm_regex.captures(line)
+
+                let name = comm_regex
+                    .captures(line)
                     .and_then(|c| c.get(1))
                     .map(|m| m.as_str().to_string())
-                    .unwrap_or_else(||
+                    .unwrap_or_else(|| {
                         fs::read_to_string(format!("/proc/{}/comm", pid))
                             .ok()
                             .map(|s| s.trim().to_string())
-                            .unwrap_or_else(||"unknown".to_string())
-                    );
+                            .unwrap_or_else(|| "unknown".to_string())
+                    });
 
                 let command = fs::read_to_string(format!("/proc/{}/cmdline", pid))
                     .ok()
@@ -257,13 +273,15 @@ impl PortManager {
             if parts.len() >= 2 {
                 let name = parts[0].to_string();
                 let pid = parts[1].parse::<u32>().ok()?;
-                
+
                 let cmd_output = Command::new("ps")
                     .args(["-p", &pid.to_string(), "-o", "command="])
                     .output()
                     .ok()?;
-                
-                let command = String::from_utf8_lossy(&cmd_output.stdout).trim().to_string();
+
+                let command = String::from_utf8_lossy(&cmd_output.stdout)
+                    .trim()
+                    .to_string();
 
                 return Some(ProcessOwner {
                     pid,
@@ -279,7 +297,7 @@ impl PortManager {
     /// Inspect a port and get its status with ownership info
     pub fn inspect_port(&self, port: u16) -> PortStatus {
         let occupied = self.is_listening(port) || !self.is_bindable(port);
-        
+
         let (pid, process, command) = if occupied {
             if let Some(owner) = self.get_port_owner(port) {
                 (Some(owner.pid), Some(owner.name), Some(owner.command))
@@ -303,17 +321,6 @@ impl PortManager {
     pub fn find_free_port(&self, preferred: u16) -> Option<u16> {
         let last = preferred.saturating_add(SEARCH_RANGE);
         (preferred..=last).find(|port| self.inspect_port(*port).available)
-    }
-
-    /// Get all ports in use with ownership info
-    pub fn get_all_occupied_ports(&self) -> Vec<PortStatus> {
-        let mut occupied = Vec::new();
-        for port in 1..=65535 {
-            if self.is_listening(port) {
-                occupied.push(self.inspect_port(port));
-            }
-        }
-        occupied
     }
 }
 
@@ -370,7 +377,11 @@ impl PortChanger {
     }
 
     /// Replace port references in a file
-    fn replace_port_in_file(file_path: &Path, from_port: u16, to_port: u16) -> Result<bool, std::io::Error> {
+    fn replace_port_in_file(
+        file_path: &Path,
+        from_port: u16,
+        to_port: u16,
+    ) -> Result<bool, std::io::Error> {
         let content = fs::read_to_string(file_path)?;
         let from_str = from_port.to_string();
         let to_str = to_port.to_string();
@@ -386,11 +397,11 @@ impl PortChanger {
 
         while i < bytes.len() {
             // Check if the port number matches at this position
-            if i + from_len <= bytes.len() && &bytes[i..i+from_len] == from_bytes {
+            if i + from_len <= bytes.len() && &bytes[i..i + from_len] == from_bytes {
                 // Check if surrounded by non-digits (or start/end)
-                let before_ok = i == 0 || !bytes[i-1].is_ascii_digit();
-                let after_ok = i + from_len >= bytes.len() || !bytes[i+from_len].is_ascii_digit();
-                
+                let before_ok = i == 0 || !bytes[i - 1].is_ascii_digit();
+                let after_ok = i + from_len >= bytes.len() || !bytes[i + from_len].is_ascii_digit();
+
                 if before_ok && after_ok {
                     result.push_str(&to_str);
                     i += from_len;
@@ -402,7 +413,7 @@ impl PortChanger {
         }
 
         let new_content = result;
-        
+
         if new_content != content {
             fs::write(file_path, new_content.as_bytes())?;
             Ok(true)
@@ -412,7 +423,11 @@ impl PortChanger {
     }
 
     /// Change a port across all relevant files in a project
-    pub fn change_port(project_dir: &str, from_port: u16, to_port: u16) -> Result<Vec<String>, std::io::Error> {
+    pub fn change_port(
+        project_dir: &str,
+        from_port: u16,
+        to_port: u16,
+    ) -> Result<Vec<String>, std::io::Error> {
         if from_port == to_port {
             return Ok(Vec::new());
         }
@@ -422,7 +437,12 @@ impl PortChanger {
 
         for file in files {
             if Self::replace_port_in_file(&file, from_port, to_port)? {
-                modified.push(file.strip_prefix(project_dir).unwrap_or(&file).to_string_lossy().to_string());
+                modified.push(
+                    file.strip_prefix(project_dir)
+                        .unwrap_or(&file)
+                        .to_string_lossy()
+                        .to_string(),
+                );
             }
         }
 
@@ -450,31 +470,36 @@ impl PortManagerWithChange {
         self.inspector.find_free_port(preferred)
     }
 
-    pub fn get_all_occupied_ports(&self) -> Vec<PortStatus> {
-        self.inspector.get_all_occupied_ports()
-    }
-
-    pub fn change_port(&self, project_dir: &str, from_port: u16, to_port: u16) -> Result<Vec<String>, std::io::Error> {
+    pub fn change_port(
+        &self,
+        project_dir: &str,
+        from_port: u16,
+        to_port: u16,
+    ) -> Result<Vec<String>, std::io::Error> {
         PortChanger::change_port(project_dir, from_port, to_port)
     }
 
     pub fn execute(&self, operation: PortOperation) -> PortOutcome {
         match operation {
-            PortOperation::InspectPort(port) => PortOutcome::Status(self.inspector.inspect_port(port)),
+            PortOperation::InspectPort(port) => {
+                PortOutcome::Status(self.inspector.inspect_port(port))
+            }
             PortOperation::FindFreePort(port) => match self.inspector.find_free_port(port) {
                 Some(free) => PortOutcome::FreePort(free),
                 None => PortOutcome::NotImplemented("no free port found in search range"),
             },
-            PortOperation::ChangePort { from, to, project_dir } => {
-                match PortChanger::change_port(&project_dir, from, to) {
-                    Ok(modified) => PortOutcome::Changed {
-                        from,
-                        to,
-                        modified_files: modified,
-                    },
-                    Err(e) => PortOutcome::Error(e.to_string()),
-                }
-            }
+            PortOperation::ChangePort {
+                from,
+                to,
+                project_dir,
+            } => match PortChanger::change_port(&project_dir, from, to) {
+                Ok(modified) => PortOutcome::Changed {
+                    from,
+                    to,
+                    modified_files: modified,
+                },
+                Err(e) => PortOutcome::Error(e.to_string()),
+            },
         }
     }
 }
@@ -597,9 +622,17 @@ mod tests {
 
     #[test]
     fn changing_a_port_is_reported_as_changed() {
-        let result = execute(PortOperation::ChangePort { from: 3000, to: 3100, project_dir: ".".to_string() });
+        let result = execute(PortOperation::ChangePort {
+            from: 3000,
+            to: 3100,
+            project_dir: ".".to_string(),
+        });
         match result {
-            PortOutcome::Changed { from, to, modified_files } => {
+            PortOutcome::Changed {
+                from,
+                to,
+                modified_files,
+            } => {
                 assert_eq!(from, 3000);
                 assert_eq!(to, 3100);
                 assert_eq!(modified_files, Vec::<String>::new());
@@ -641,20 +674,27 @@ mod tests {
 
     #[test]
     fn port_operation_serializes_with_camel_case() {
-        let op = PortOperation::ChangePort { from: 3000, to: 3100, project_dir: ".".to_string() };
+        let op = PortOperation::ChangePort {
+            from: 3000,
+            to: 3100,
+            project_dir: ".".to_string(),
+        };
         let json = serde_json::to_value(&op).unwrap();
         // Handle both externally tagged ({"ChangePort": {...}}) and internally tagged formats
-        let from = json.get("from")
+        let from = json
+            .get("from")
             .or_else(|| json.get("changePort").and_then(|v| v.get("from")))
             .expect("from field");
         assert_eq!(from, 3000);
-        
-        let to = json.get("to")
+
+        let to = json
+            .get("to")
             .or_else(|| json.get("changePort").and_then(|v| v.get("to")))
             .expect("to field");
         assert_eq!(to, 3100);
-        
-        let project_dir = json.get("projectDir")
+
+        let project_dir = json
+            .get("projectDir")
             .or_else(|| json.get("changePort").and_then(|v| v.get("projectDir")))
             .expect("projectDir field");
         assert_eq!(project_dir, ".");
@@ -669,21 +709,22 @@ mod tests {
         };
         let json = serde_json::to_value(&outcome).unwrap();
         // Handle both externally tagged ({"Changed": {...}}) and internally tagged formats
-        let from = json.get("from")
+        let from = json
+            .get("from")
             .or_else(|| json.get("changed").and_then(|v| v.get("from")))
             .expect("from field");
         assert_eq!(from, 3000);
-        
-        let to = json.get("to")
+
+        let to = json
+            .get("to")
             .or_else(|| json.get("changed").and_then(|v| v.get("to")))
             .expect("to field");
         assert_eq!(to, 3100);
-        
-        let modified_files = json.get("modifiedFiles")
+
+        let modified_files = json
+            .get("modifiedFiles")
             .or_else(|| json.get("changed").and_then(|v| v.get("modifiedFiles")))
             .expect("modifiedFiles field");
         assert_eq!(modified_files[0], "package.json");
     }
 }
-
-

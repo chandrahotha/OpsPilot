@@ -1,6 +1,6 @@
 //! Node.js detection: manifest reading, package manager and framework resolution.
 
-use crate::{exists, read_text, Detector};
+use crate::{Detector, exists, read_text};
 use pilot_core::{BackendInfo, CommandInfo, FrontendInfo, ProjectModel};
 use serde_json::Value;
 
@@ -73,7 +73,8 @@ impl Detector for NodeDetector {
         };
 
         let Ok(json) = serde_json::from_str::<Value>(&manifest) else {
-            evidence.push("package.json is not valid JSON; framework detection skipped".to_string());
+            evidence
+                .push("package.json is not valid JSON; framework detection skipped".to_string());
             return evidence;
         };
 
@@ -124,8 +125,14 @@ fn collect_commands(
         let command = run_command(package_manager, script);
 
         if !model.commands.iter().any(|known| known.name == *script) {
-            model.commands.push(CommandInfo::new(*script, command.clone(), "package.json scripts"));
-            evidence.push(format!("{script} command `{command}` (package.json scripts)"));
+            model.commands.push(CommandInfo::new(
+                *script,
+                command.clone(),
+                "package.json scripts",
+            ));
+            evidence.push(format!(
+                "{script} command `{command}` (package.json scripts)"
+            ));
         }
     }
 }
@@ -209,8 +216,14 @@ mod tests {
             r#"{"dependencies":{"express":"4.0.0"},"devDependencies":{"vite":"5.0.0"}}"#,
         ));
 
-        assert_eq!(resolve(FRONTEND_FRAMEWORKS, &deps).map(|f| f.1), Some("vite"));
-        assert_eq!(resolve(BACKEND_FRAMEWORKS, &deps).map(|b| b.1), Some("express"));
+        assert_eq!(
+            resolve(FRONTEND_FRAMEWORKS, &deps).map(|f| f.1),
+            Some("vite")
+        );
+        assert_eq!(
+            resolve(BACKEND_FRAMEWORKS, &deps).map(|b| b.1),
+            Some("express")
+        );
     }
 
     #[test]
@@ -218,7 +231,10 @@ mod tests {
         let json = manifest(r#"{"scripts":{"dev":"next dev --port 4321"}}"#);
 
         assert_eq!(port_from_scripts(&json), Some(4321));
-        assert_eq!(port_from_scripts(&manifest(r#"{"scripts":{"dev":"vite"}}"#)), None);
+        assert_eq!(
+            port_from_scripts(&manifest(r#"{"scripts":{"dev":"vite"}}"#)),
+            None
+        );
     }
 
     #[test]
@@ -247,7 +263,11 @@ mod tests {
 
         collect_commands(&json, "npm", &mut model, &mut evidence);
 
-        let names: Vec<&str> = model.commands.iter().map(|command| command.name.as_str()).collect();
+        let names: Vec<&str> = model
+            .commands
+            .iter()
+            .map(|command| command.name.as_str())
+            .collect();
 
         assert_eq!(names, vec!["dev", "build"]);
         assert_eq!(model.commands[0].command, "npm run dev");

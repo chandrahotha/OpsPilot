@@ -4,7 +4,9 @@
 //! Destructive operations must always be confirmed by the user first
 //! ("Pilot Prerequisite.md" section 12).
 
-use pilot_process_manager::{LocalProcessManager, ProcessManager, ProcessOutcome, ProcessRequest, ProcessState};
+use pilot_process_manager::{
+    LocalProcessManager, ProcessManager, ProcessOutcome, ProcessRequest, ProcessState,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -141,7 +143,10 @@ pub enum DatabaseOutcome {
     /// Operation requires user confirmation first
     NeedsConfirmation { risk: RiskLevel },
     /// Operation failed with error
-    Error { message: String, output: Option<String> },
+    Error {
+        message: String,
+        output: Option<String>,
+    },
     /// Operation is not implemented for this integration
     NotImplemented { reason: String },
 }
@@ -219,11 +224,14 @@ impl DatabaseManager {
             DatabaseOperation::Backup => {
                 if let Some(db) = &integration.database {
                     if matches!(db.r#type, DatabaseType::PostgreSQL) {
-                        format!("pg_dump -h {} -p {} -U postgres -d {} > backup.sql", 
-                            db.host, db.port, db.name)
+                        format!(
+                            "pg_dump -h {} -p {} -U postgres -d {} > backup.sql",
+                            db.host, db.port, db.name
+                        )
                     } else {
                         return DatabaseOutcome::NotImplemented {
-                            reason: "Backup not implemented for this database type with Prisma".to_string(),
+                            reason: "Backup not implemented for this database type with Prisma"
+                                .to_string(),
                         };
                     }
                 } else {
@@ -236,11 +244,14 @@ impl DatabaseManager {
             DatabaseOperation::Restore => {
                 if let Some(db) = &integration.database {
                     if matches!(db.r#type, DatabaseType::PostgreSQL) {
-                        format!("psql -h {} -p {} -U postgres -d {} < backup.sql", 
-                            db.host, db.port, db.name)
+                        format!(
+                            "psql -h {} -p {} -U postgres -d {} < backup.sql",
+                            db.host, db.port, db.name
+                        )
                     } else {
                         return DatabaseOutcome::NotImplemented {
-                            reason: "Restore not implemented for this database type with Prisma".to_string(),
+                            reason: "Restore not implemented for this database type with Prisma"
+                                .to_string(),
                         };
                     }
                 } else {
@@ -268,15 +279,21 @@ impl DatabaseManager {
             DatabaseOperation::Status => format!("{} {} check --deploy", python, manage_py),
             DatabaseOperation::Migrate => format!("{} {} migrate --noinput", python, manage_py),
             DatabaseOperation::Seed => format!("{} {} loaddata fixtures/*.json", python, manage_py),
-            DatabaseOperation::Reset => format!("{} {} flush --noinput && {} {} migrate --noinput", python, manage_py, python, manage_py),
+            DatabaseOperation::Reset => format!(
+                "{} {} flush --noinput && {} {} migrate --noinput",
+                python, manage_py, python, manage_py
+            ),
             DatabaseOperation::Backup => {
                 if let Some(db) = &integration.database {
                     if matches!(db.r#type, DatabaseType::PostgreSQL) {
-                        format!("pg_dump -h {} -p {} -U postgres -d {} > backup.sql", 
-                            db.host, db.port, db.name)
+                        format!(
+                            "pg_dump -h {} -p {} -U postgres -d {} > backup.sql",
+                            db.host, db.port, db.name
+                        )
                     } else {
                         return DatabaseOutcome::NotImplemented {
-                            reason: "Backup not implemented for this database type with Django".to_string(),
+                            reason: "Backup not implemented for this database type with Django"
+                                .to_string(),
                         };
                     }
                 } else {
@@ -289,11 +306,14 @@ impl DatabaseManager {
             DatabaseOperation::Restore => {
                 if let Some(db) = &integration.database {
                     if matches!(db.r#type, DatabaseType::PostgreSQL) {
-                        format!("psql -h {} -p {} -U postgres -d {} < backup.sql", 
-                            db.host, db.port, db.name)
+                        format!(
+                            "psql -h {} -p {} -U postgres -d {} < backup.sql",
+                            db.host, db.port, db.name
+                        )
                     } else {
                         return DatabaseOutcome::NotImplemented {
-                            reason: "Restore not implemented for this database type with Django".to_string(),
+                            reason: "Restore not implemented for this database type with Django"
+                                .to_string(),
                         };
                     }
                 } else {
@@ -322,15 +342,20 @@ impl DatabaseManager {
                     reason: "Alembic doesn't have built-in seeding support".to_string(),
                 };
             }
-            DatabaseOperation::Reset => "alembic downgrade base && alembic upgrade head".to_string(),
+            DatabaseOperation::Reset => {
+                "alembic downgrade base && alembic upgrade head".to_string()
+            }
             DatabaseOperation::Backup => {
                 if let Some(db) = &integration.database {
                     if matches!(db.r#type, DatabaseType::PostgreSQL) {
-                        format!("pg_dump -h {} -p {} -U postgres -d {} > backup.sql", 
-                            db.host, db.port, db.name)
+                        format!(
+                            "pg_dump -h {} -p {} -U postgres -d {} > backup.sql",
+                            db.host, db.port, db.name
+                        )
                     } else {
                         return DatabaseOutcome::NotImplemented {
-                            reason: "Backup not implemented for this database type with Alembic".to_string(),
+                            reason: "Backup not implemented for this database type with Alembic"
+                                .to_string(),
                         };
                     }
                 } else {
@@ -343,11 +368,14 @@ impl DatabaseManager {
             DatabaseOperation::Restore => {
                 if let Some(db) = &integration.database {
                     if matches!(db.r#type, DatabaseType::PostgreSQL) {
-                        format!("psql -h {} -p {} -U postgres -d {} < backup.sql", 
-                            db.host, db.port, db.name)
+                        format!(
+                            "psql -h {} -p {} -U postgres -d {} < backup.sql",
+                            db.host, db.port, db.name
+                        )
                     } else {
                         return DatabaseOutcome::NotImplemented {
-                            reason: "Restore not implemented for this database type with Alembic".to_string(),
+                            reason: "Restore not implemented for this database type with Alembic"
+                                .to_string(),
                         };
                     }
                 } else {
@@ -372,7 +400,8 @@ impl DatabaseManager {
             Some(db) => db,
             None => {
                 return DatabaseOutcome::Error {
-                    message: "Database connection info required for PostgreSQL operations".to_string(),
+                    message: "Database connection info required for PostgreSQL operations"
+                        .to_string(),
                     output: None,
                 };
             }
@@ -386,8 +415,10 @@ impl DatabaseManager {
 
         let command = match operation {
             DatabaseOperation::Status => {
-                format!("psql -h {} -p {} -U postgres -d {} -c \"SELECT 1\"", 
-                    db.host, db.port, db.name)
+                format!(
+                    "psql -h {} -p {} -U postgres -d {} -c \"SELECT 1\"",
+                    db.host, db.port, db.name
+                )
             }
             DatabaseOperation::Migrate => {
                 return DatabaseOutcome::NotImplemented {
@@ -400,16 +431,22 @@ impl DatabaseManager {
                 };
             }
             DatabaseOperation::Reset => {
-                format!("psql -h {} -p {} -U postgres -d {} -c \"DROP SCHEMA public CASCADE; CREATE SCHEMA public;\"", 
-                    db.host, db.port, db.name)
+                format!(
+                    "psql -h {} -p {} -U postgres -d {} -c \"DROP SCHEMA public CASCADE; CREATE SCHEMA public;\"",
+                    db.host, db.port, db.name
+                )
             }
             DatabaseOperation::Backup => {
-                format!("pg_dump -h {} -p {} -U postgres -d {} > backup.sql", 
-                    db.host, db.port, db.name)
+                format!(
+                    "pg_dump -h {} -p {} -U postgres -d {} > backup.sql",
+                    db.host, db.port, db.name
+                )
             }
             DatabaseOperation::Restore => {
-                format!("psql -h {} -p {} -U postgres -d {} < backup.sql", 
-                    db.host, db.port, db.name)
+                format!(
+                    "psql -h {} -p {} -U postgres -d {} < backup.sql",
+                    db.host, db.port, db.name
+                )
             }
         };
 
@@ -557,7 +594,10 @@ fn missing_tool_hint(command: &str, logs: &str) -> Option<String> {
         return None;
     }
 
-    let tool = command.split_whitespace().next().unwrap_or("the required tool");
+    let tool = command
+        .split_whitespace()
+        .next()
+        .unwrap_or("the required tool");
     Some(format!(
         "`{tool}` is not installed or not on PATH; install the client, or run the database with `docker compose up`"
     ))
@@ -600,10 +640,15 @@ mod tests {
             database: None,
             env: HashMap::new(),
         };
-        
+
         let manager = DatabaseManager::new();
         let result = manager.execute(&integration, DatabaseOperation::Reset);
-        assert!(matches!(result, DatabaseOutcome::NeedsConfirmation { risk: RiskLevel::High }));
+        assert!(matches!(
+            result,
+            DatabaseOutcome::NeedsConfirmation {
+                risk: RiskLevel::High
+            }
+        ));
     }
 
     #[test]
@@ -614,7 +659,7 @@ mod tests {
             database: None,
             env: HashMap::new(),
         };
-        
+
         let manager = DatabaseManager::new();
         let result = manager.execute(&integration, DatabaseOperation::Status);
         assert!(!matches!(result, DatabaseOutcome::NeedsConfirmation { .. }));
@@ -628,12 +673,12 @@ mod tests {
 
     #[test]
     fn prisma_migrate_command() {
-        let _ = format!("prisma migrate deploy");
+        let _ = "prisma migrate deploy";
     }
 
     #[test]
     fn django_migrate_command() {
-        let _ = format!("python manage.py migrate --noinput");
+        let _ = "python manage.py migrate --noinput";
     }
 
     #[test]
@@ -670,7 +715,10 @@ mod tests {
     #[test]
     fn tool_failures_are_not_mistaken_for_missing_tools() {
         assert_eq!(
-            missing_tool_hint("psql -h localhost", "psql: FATAL: database \"x\" does not exist"),
+            missing_tool_hint(
+                "psql -h localhost",
+                "psql: FATAL: database \"x\" does not exist"
+            ),
             None
         );
         assert_eq!(missing_tool_hint("prisma migrate deploy", ""), None);

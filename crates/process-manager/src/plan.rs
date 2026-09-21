@@ -66,10 +66,7 @@ impl StartupPlan {
 
     /// The exact commands the plan would run, in order
     pub fn commands(&self) -> Vec<String> {
-        self.steps
-            .iter()
-            .map(|step| step.command.clone())
-            .collect()
+        self.steps.iter().map(|step| step.command.clone()).collect()
     }
 }
 
@@ -91,21 +88,27 @@ pub fn build_startup_plan(model: &ProjectModel, project_path: &str) -> StartupPl
         .find(|command| is_run_command(&command.name))
         .map(|command| command.command.clone());
 
-    let backend_framework = model.backend.as_ref().map(|backend| backend.framework.as_str());
+    let backend_framework = model
+        .backend
+        .as_ref()
+        .map(|backend| backend.framework.as_str());
 
     match (model.frontend.is_some(), backend_framework, run.as_deref()) {
         (true, Some(_), Some(command)) => {
             // A full-stack Node.js app serves backend and frontend from one server.
-            plan.steps.push(StartupStep::new("frontend", command, project_path));
+            plan.steps
+                .push(StartupStep::new("frontend", command, project_path));
             plan.warnings.push(format!(
                 "the backend is served by the same process ({command}), which is why it has no separate step"
             ));
         }
         (true, _, Some(command)) => {
-            plan.steps.push(StartupStep::new("frontend", command, project_path));
+            plan.steps
+                .push(StartupStep::new("frontend", command, project_path));
         }
         (false, Some("django"), Some(command)) => {
-            plan.steps.push(StartupStep::new("backend", command, project_path));
+            plan.steps
+                .push(StartupStep::new("backend", command, project_path));
         }
         (false, Some(_), Some(command)) => {
             // Any other backend framework (express, fastify, koa, nestjs,
@@ -113,7 +116,8 @@ pub fn build_startup_plan(model: &ProjectModel, project_path: &str) -> StartupPl
             // backend step. Previously only django was handled here and
             // every other backend silently produced no step, so Start
             // failed with "No startup step found".
-            plan.steps.push(StartupStep::new("backend", command, project_path));
+            plan.steps
+                .push(StartupStep::new("backend", command, project_path));
         }
         (false, None, Some(command)) => {
             // A declared run command (dev/start/serve) exists but no
@@ -121,7 +125,8 @@ pub fn build_startup_plan(model: &ProjectModel, project_path: &str) -> StartupPl
             // package.json with scripts and no known framework
             // dependency). Expose it as a generic "app" step instead of
             // silently dropping it, so Start actually does something.
-            plan.steps.push(StartupStep::new("app", command, project_path));
+            plan.steps
+                .push(StartupStep::new("app", command, project_path));
         }
         (false, Some(framework), _) if model.backend.is_some() => {
             plan.warnings.push(format!(
@@ -157,7 +162,8 @@ pub fn build_startup_plan(model: &ProjectModel, project_path: &str) -> StartupPl
         .is_some_and(|docker| docker.compose || docker.detected)
     {
         plan.warnings.push(
-            "Docker services are not started automatically; manage them from the Docker panel".to_string(),
+            "Docker services are not started automatically; manage them from the Docker panel"
+                .to_string(),
         );
     }
 
@@ -291,16 +297,22 @@ mod tests {
 
         assert_eq!(plan.steps.len(), 1);
         assert_eq!(plan.steps[0].command, "npm run dev");
-        assert!(plan.warnings.iter().any(|warning| warning.contains("backend")));
+        assert!(
+            plan.warnings
+                .iter()
+                .any(|warning| warning.contains("backend"))
+        );
     }
 
     #[test]
     fn a_django_project_uses_its_runner() {
         let mut model = ProjectModel::new("demo", ".");
         model.backend = Some(BackendInfo::new("django", 8000));
-        model
-            .commands
-            .push(CommandInfo::new("dev", "python manage.py runserver", "manage.py"));
+        model.commands.push(CommandInfo::new(
+            "dev",
+            "python manage.py runserver",
+            "manage.py",
+        ));
 
         let plan = build_startup_plan(&model, ".");
 
@@ -317,7 +329,11 @@ mod tests {
         let plan = build_startup_plan(&model, ".");
 
         assert!(!plan.executable());
-        assert!(plan.warnings.iter().any(|warning| warning.contains("fastapi")));
+        assert!(
+            plan.warnings
+                .iter()
+                .any(|warning| warning.contains("fastapi"))
+        );
     }
 
     #[test]
@@ -339,7 +355,11 @@ mod tests {
         let plan = build_startup_plan(&model, ".");
 
         assert_eq!(plan.steps.len(), 1);
-        assert!(plan.warnings.iter().any(|warning| warning.contains("Docker panel")));
+        assert!(
+            plan.warnings
+                .iter()
+                .any(|warning| warning.contains("Docker panel"))
+        );
     }
 
     #[test]
@@ -357,7 +377,11 @@ mod tests {
         let step = StartupStep::new("frontend", "npm run dev", "this/path/does/not/exist");
         let blockers = validate_step(&step);
 
-        assert!(blockers.iter().any(|blocker| blocker.contains("working directory")));
+        assert!(
+            blockers
+                .iter()
+                .any(|blocker| blocker.contains("working directory"))
+        );
     }
 
     #[test]
@@ -371,7 +395,10 @@ mod tests {
     fn an_unavailable_runtime_blocks_the_step() {
         let step = StartupStep::new("backend", "definitely-missing-tool-xyz run", ".");
 
-        assert!(validate_step(&step).is_empty(), "an unknown tool cannot be checked");
+        assert!(
+            validate_step(&step).is_empty(),
+            "an unknown tool cannot be checked"
+        );
     }
 
     #[test]
@@ -387,9 +414,11 @@ mod tests {
     fn a_non_django_backend_with_a_run_command_gets_a_backend_step() {
         let mut model = ProjectModel::new("demo", ".");
         model.backend = Some(BackendInfo::new("fastapi", 8000));
-        model
-            .commands
-            .push(CommandInfo::new("dev", "uvicorn main:app --reload", "package.json scripts"));
+        model.commands.push(CommandInfo::new(
+            "dev",
+            "uvicorn main:app --reload",
+            "package.json scripts",
+        ));
 
         let plan = build_startup_plan(&model, ".");
 
@@ -402,9 +431,11 @@ mod tests {
     #[test]
     fn a_run_command_without_a_detected_framework_gets_an_app_step() {
         let mut model = ProjectModel::new("demo", ".");
-        model
-            .commands
-            .push(CommandInfo::new("start", "node server.js", "package.json scripts"));
+        model.commands.push(CommandInfo::new(
+            "start",
+            "node server.js",
+            "package.json scripts",
+        ));
 
         let plan = build_startup_plan(&model, ".");
 

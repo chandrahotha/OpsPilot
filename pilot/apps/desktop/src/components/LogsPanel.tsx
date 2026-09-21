@@ -103,7 +103,7 @@ export function LogsPanel({ events, projectName, focus }: LogsPanelProps) {
           if (current) {
             return current;
           }
-          const runningProcess = list.find((process) => process.state === 'Running');
+          const runningProcess = list.find((process) => process.state === 'running');
           if (runningProcess) {
             return procKey(runningProcess.label);
           }

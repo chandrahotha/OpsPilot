@@ -1,6 +1,6 @@
 //! Python detection: manifests, framework and database driver resolution.
 
-use crate::{exists, read_text, Detector};
+use crate::{Detector, exists, read_text};
 use pilot_core::{BackendInfo, CommandInfo, DatabaseInfo, OrmInfo, ProjectModel};
 
 /// Python manifests that mark the directory as a Python project
@@ -37,8 +37,7 @@ impl Detector for PythonDetector {
     }
 
     fn detect(&self, project_path: &str) -> bool {
-        MANIFESTS.iter().any(|file| exists(project_path, file))
-            || exists(project_path, "manage.py")
+        MANIFESTS.iter().any(|file| exists(project_path, file)) || exists(project_path, "manage.py")
     }
 
     fn apply(&self, project_path: &str, model: &mut ProjectModel) -> Vec<String> {
@@ -117,8 +116,14 @@ mod tests {
     fn resolves_django_from_requirements() {
         let manifests = vec!["django==5.0\npsycopg[binary]==3.1\n".to_string()];
 
-        assert_eq!(resolve(BACKEND_FRAMEWORKS, &manifests).map(|f| f.1), Some("django"));
-        assert_eq!(resolve(DATABASE_DRIVERS, &manifests).map(|d| d.1), Some("postgresql"));
+        assert_eq!(
+            resolve(BACKEND_FRAMEWORKS, &manifests).map(|f| f.1),
+            Some("django")
+        );
+        assert_eq!(
+            resolve(DATABASE_DRIVERS, &manifests).map(|d| d.1),
+            Some("postgresql")
+        );
     }
 
     #[test]

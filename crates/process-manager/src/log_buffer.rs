@@ -155,7 +155,11 @@ mod tests {
         let buffer = LogBuffer::new(2);
 
         for index in 0..5 {
-            buffer.push(LogEntry::output("backend", LogStream::Stdout, index.to_string()));
+            buffer.push(LogEntry::output(
+                "backend",
+                LogStream::Stdout,
+                index.to_string(),
+            ));
         }
 
         let messages: Vec<String> = buffer

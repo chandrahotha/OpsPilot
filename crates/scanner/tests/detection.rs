@@ -21,7 +21,10 @@ fn detects_a_nextjs_prisma_docker_project() {
             "prisma/schema.prisma",
             "datasource db {\n  provider = \"postgresql\"\n}\n",
         )
-        .file("docker-compose.yml", "services:\n  db:\n    image: postgres:16\n")
+        .file(
+            "docker-compose.yml",
+            "services:\n  db:\n    image: postgres:16\n",
+        )
         .file(".env", "DATABASE_URL=postgres://localhost:5432/db\n")
         .file(".env.example", "DATABASE_URL=\n");
 
@@ -36,7 +39,10 @@ fn detects_a_nextjs_prisma_docker_project() {
         Some("nextjs")
     );
     assert_eq!(model.frontend.as_ref().map(|f| f.port), Some(3000));
-    assert_eq!(model.orm.as_ref().map(|orm| orm.r#type.as_str()), Some("prisma"));
+    assert_eq!(
+        model.orm.as_ref().map(|orm| orm.r#type.as_str()),
+        Some("prisma")
+    );
     assert_eq!(
         model.database.as_ref().map(|db| db.r#type.as_str()),
         Some("postgresql")
@@ -49,7 +55,12 @@ fn detects_a_nextjs_prisma_docker_project() {
     assert!(environment.env_file && environment.env_example);
 
     assert!(result.evidence.iter().any(|line| line.contains("nextjs")));
-    assert!(result.evidence.iter().any(|line| line.contains("package-lock.json")));
+    assert!(
+        result
+            .evidence
+            .iter()
+            .any(|line| line.contains("package-lock.json"))
+    );
 }
 
 #[test]
@@ -89,7 +100,12 @@ fn detects_a_django_project_from_manage_py() {
         model.database.as_ref().map(|db| db.r#type.as_str()),
         Some("postgresql")
     );
-    assert!(result.evidence.iter().any(|line| line.contains("manage.py")));
+    assert!(
+        result
+            .evidence
+            .iter()
+            .any(|line| line.contains("manage.py"))
+    );
     assert!(result.evidence.iter().any(|line| line.contains("alembic")));
 }
 

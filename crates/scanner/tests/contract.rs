@@ -39,7 +39,10 @@ fn evidence_is_deterministic_and_not_repeated() {
     fixture
         .file("package.json", r#"{"dependencies":{"next":"15.0.0"}}"#)
         .file("Dockerfile", "FROM node:22-alpine\n")
-        .file("docker-compose.yml", "services:\n  db:\n    image: postgres:16\n");
+        .file(
+            "docker-compose.yml",
+            "services:\n  db:\n    image: postgres:16\n",
+        );
 
     let first = fixture.scan();
     let second = fixture.scan();

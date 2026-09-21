@@ -1,10 +1,10 @@
+use crate::ProcessRequest;
 use crate::capture::spawn_output_readers;
 use crate::history::{HistoryEntry, OperationHistory};
 use crate::log_buffer::LogBuffer;
 use crate::outcome::ProcessOutcome;
 use crate::platform::{current_platform, kill_tree_command, shell_command, stop_tree_command};
 use crate::registry::{ProcessRecord, ProcessSnapshot, ProcessState};
-use crate::ProcessRequest;
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -222,35 +222,37 @@ impl LocalProcessManager {
         let watcher = Arc::clone(record);
         let platform = current_platform();
 
-        thread::spawn(move || loop {
-            thread::sleep(POLL_INTERVAL);
+        thread::spawn(move || {
+            loop {
+                thread::sleep(POLL_INTERVAL);
 
-            let exit = {
-                let mut fields = watcher.lock();
+                let exit = {
+                    let mut fields = watcher.lock();
 
-                match fields.child().as_mut() {
-                    Some(child) => child.try_wait().ok().flatten(),
-                    None => None,
+                    match fields.child().as_mut() {
+                        Some(child) => child.try_wait().ok().flatten(),
+                        None => None,
+                    }
+                };
+
+                let Some(status) = exit else {
+                    continue;
+                };
+
+                watcher.set_exit_code(status.code());
+
+                if watcher.state() == ProcessState::Running {
+                    watcher.set_state(ProcessState::Exited);
                 }
-            };
 
-            let Some(status) = exit else {
-                continue;
-            };
+                let reason = status
+                    .code()
+                    .map(|code| format!("process exited with code {code}"))
+                    .unwrap_or_else(|| format!("process ended on {platform}"));
 
-            watcher.set_exit_code(status.code());
-
-            if watcher.state() == ProcessState::Running {
-                watcher.set_state(ProcessState::Exited);
+                watcher.logs.push_system(&watcher.request.label, reason);
+                break;
             }
-
-            let reason = status
-                .code()
-                .map(|code| format!("process exited with code {code}"))
-                .unwrap_or_else(|| format!("process ended on {platform}"));
-
-            watcher.logs.push_system(&watcher.request.label, reason);
-            break;
         });
     }
 
@@ -435,13 +437,15 @@ mod tests {
             other => panic!("expected Stopped, got {other:?}"),
         }
 
-        assert!(!manager.status("kill-me").is_ok() || {
-            matches!(
-                manager.status("kill-me"),
-                ProcessOutcome::Snapshot(ref snapshot)
-                    if snapshot.state != ProcessState::Running
-            )
-        });
+        assert!(
+            !manager.status("kill-me").is_ok() || {
+                matches!(
+                    manager.status("kill-me"),
+                    ProcessOutcome::Snapshot(ref snapshot)
+                        if snapshot.state != ProcessState::Running
+                )
+            }
+        );
     }
 
     #[test]

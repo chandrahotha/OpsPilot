@@ -80,7 +80,10 @@ mod tests {
             .with_evidence(vec!["package.json".to_string()]);
 
         assert!(result.detected);
-        assert_eq!(result.model().map(|model| model.project.name.as_str()), Some("demo"));
+        assert_eq!(
+            result.model().map(|model| model.project.name.as_str()),
+            Some("demo")
+        );
         assert_eq!(result.evidence, vec!["package.json".to_string()]);
     }
 

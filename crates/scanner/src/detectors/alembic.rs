@@ -1,6 +1,6 @@
 //! Alembic migration detection.
 
-use crate::{exists, Detector};
+use crate::{Detector, exists};
 use pilot_core::{OrmInfo, ProjectModel};
 
 /// Detect Alembic by presence of alembic.ini

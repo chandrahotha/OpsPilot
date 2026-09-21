@@ -26,7 +26,7 @@ export function ScriptsPanel({ projectPath, commands }: ScriptsPanelProps) {
       const list = await api.listProcesses();
       setRunning(
         list
-          .filter((process) => process.state === 'Running')
+          .filter((process) => process.state === 'running')
           .map((process) => process.label),
       );
     } catch {

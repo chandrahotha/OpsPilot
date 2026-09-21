@@ -163,15 +163,14 @@ fn start_project(path: Option<String>, service: String) -> Result<String, String
     // Scope the duplicate guard to this project: the same label running for
     // a *different* project must name that project instead of confusingly
     // claiming "already running".
-    if let ProcessOutcome::Snapshot(existing) = manager.status(&step.service) {
-        if existing.state == ProcessState::Running
-            && !existing.working_directory.eq_ignore_ascii_case(&path)
-        {
-            return Err(format!(
-                "{} is already running for another project ({}) with pid {:?}; stop it there first",
-                service, existing.working_directory, existing.pid
-            ));
-        }
+    if let ProcessOutcome::Snapshot(existing) = manager.status(&step.service)
+        && existing.state == ProcessState::Running
+        && !existing.working_directory.eq_ignore_ascii_case(&path)
+    {
+        return Err(format!(
+            "{} is already running for another project ({}) with pid {:?}; stop it there first",
+            service, existing.working_directory, existing.pid
+        ));
     }
     // Pre-flight: if the service port is held by a process Pilot did not
     // start (a terminal, an IDE, a previous session), refuse now with the
@@ -383,7 +382,9 @@ fn stop_external_service(path: Option<String>, service: String) -> Result<String
     // and a stale reading must never make Pilot terminate the wrong process.
     let fresh = pilot_port_manager::inspect_port(port);
     if fresh.available {
-        return Ok(format!("port {port} became free on its own; nothing to stop"));
+        return Ok(format!(
+            "port {port} became free on its own; nothing to stop"
+        ));
     }
     if fresh.pid != Some(pid) {
         let holder = fresh
@@ -392,7 +393,10 @@ fn stop_external_service(path: Option<String>, service: String) -> Result<String
             .map(|name| {
                 format!(
                     "{name} (pid {})",
-                    fresh.pid.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string())
+                    fresh
+                        .pid
+                        .map(|p| p.to_string())
+                        .unwrap_or_else(|| "?".to_string())
                 )
             })
             .unwrap_or_else(|| "an unidentified process".to_string());
@@ -416,28 +420,11 @@ fn stop_external_service(path: Option<String>, service: String) -> Result<String
     }
 }
 
-/// Get process status for a service
-#[command]
-fn get_process_status(service: String) -> Result<ProcessSnapshotResponse, String> {
-    let manager = get_process_manager();
-    match manager.status(&service) {
-        ProcessOutcome::Snapshot(snapshot) => Ok(ProcessSnapshotResponse {
-            label: snapshot.label,
-            command: snapshot.command,
-            working_directory: snapshot.working_directory,
-            pid: snapshot.pid,
-            state: format!("{:?}", snapshot.state),
-            detail: snapshot.detail,
-            exit_code: snapshot.exit_code,
-            started_at_ms: snapshot.started_at_ms,
-        }),
-        ProcessOutcome::NotFound(label) => Err(format!("Service {} not found", label)),
-        ProcessOutcome::Error(e) => Err(e),
-        _ => Err("Unexpected outcome".to_string()),
-    }
-}
-
 /// List all tracked processes
+///
+/// The lifecycle state is serialized as a lowercase enum (`running`,
+/// `stopped`, `exited`, `failed`) — never a Rust Debug string — so the GUI
+/// matches on it with type safety instead of stringly-typed luck.
 #[command]
 fn list_processes() -> Result<Vec<ProcessSnapshotResponse>, String> {
     let manager = get_process_manager();
@@ -449,7 +436,7 @@ fn list_processes() -> Result<Vec<ProcessSnapshotResponse>, String> {
             command: s.command,
             working_directory: s.working_directory,
             pid: s.pid,
-            state: format!("{:?}", s.state),
+            state: s.state,
             detail: s.detail,
             exit_code: s.exit_code,
             started_at_ms: s.started_at_ms,
@@ -792,16 +779,15 @@ fn start_all_project(path: Option<String>) -> Result<String, String> {
     }
 
     for step in &plan.steps {
-        if let ProcessOutcome::Snapshot(existing) = manager.status(&step.service) {
-            if existing.state == ProcessState::Running
-                && existing.working_directory.eq_ignore_ascii_case(&path)
-            {
-                lines.push(format!(
-                    "{} already running (pid {:?}); skipped",
-                    step.service, existing.pid
-                ));
-                continue;
-            }
+        if let ProcessOutcome::Snapshot(existing) = manager.status(&step.service)
+            && existing.state == ProcessState::Running
+            && existing.working_directory.eq_ignore_ascii_case(&path)
+        {
+            lines.push(format!(
+                "{} already running (pid {:?}); skipped",
+                step.service, existing.pid
+            ));
+            continue;
         }
 
         let blockers = validate_step(step);
@@ -913,13 +899,13 @@ fn run_script(path: Option<String>, name: String) -> Result<String, String> {
 
     let label = format!("script-{name}");
     let manager = get_process_manager();
-    if let ProcessOutcome::Snapshot(existing) = manager.status(&label) {
-        if existing.state == ProcessState::Running {
-            return Err(format!(
-                "script '{name}' is already running (pid {:?}); stop it first",
-                existing.pid
-            ));
-        }
+    if let ProcessOutcome::Snapshot(existing) = manager.status(&label)
+        && existing.state == ProcessState::Running
+    {
+        return Err(format!(
+            "script '{name}' is already running (pid {:?}); stop it first",
+            existing.pid
+        ));
     }
 
     let request = ProcessRequest::new(&label, &declared.command, &path);
@@ -1098,7 +1084,7 @@ struct ProcessSnapshotResponse {
     command: String,
     working_directory: String,
     pid: Option<u32>,
-    state: String,
+    state: ProcessState,
     detail: String,
     exit_code: Option<i32>,
     started_at_ms: Option<u64>,
@@ -1129,7 +1115,6 @@ fn main() {
             kill_all_project,
             run_script,
             open_frontend,
-            get_process_status,
             list_processes,
             get_service_logs,
             docker_status,

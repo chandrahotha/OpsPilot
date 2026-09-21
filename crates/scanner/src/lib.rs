@@ -83,8 +83,7 @@ pub fn read_text(project_path: &str, relative: &str) -> Option<String> {
 
 /// Join a project root with a path relative to it, using the host separator
 fn join(project_path: &str, relative: &str) -> PathBuf {
-    PathBuf::from(project_path)
-        .join(relative.trim_start_matches(['/', '\\']))
+    PathBuf::from(project_path).join(relative.trim_start_matches(['/', '\\']))
 }
 
 #[cfg(test)]
@@ -94,7 +93,10 @@ mod tests {
     #[test]
     fn project_name_is_the_last_path_segment() {
         assert_eq!(project_name_from_path("C:/projects/my-ai-app"), "my-ai-app");
-        assert_eq!(project_name_from_path("C:\\projects\\my-ai-app"), "my-ai-app");
+        assert_eq!(
+            project_name_from_path("C:\\projects\\my-ai-app"),
+            "my-ai-app"
+        );
         assert_eq!(project_name_from_path("/home/dev/my-ai-app/"), "my-ai-app");
         assert_eq!(project_name_from_path("."), "unknown-project");
     }
@@ -116,7 +118,10 @@ mod tests {
     fn relative_paths_resolve_to_a_named_directory() {
         let resolved = resolve_project_path(".").expect("the current directory must resolve");
 
-        assert!(!resolved.ends_with('.'), "resolved path must not end in a dot");
+        assert!(
+            !resolved.ends_with('.'),
+            "resolved path must not end in a dot"
+        );
 
         let name = project_name_from_path(&resolved);
 
@@ -127,8 +132,8 @@ mod tests {
     #[test]
     fn absolute_paths_survive_resolution() {
         let absolute = std::env::temp_dir().join("ops-pilot-resolve-check");
-        let resolved =
-            resolve_project_path(&absolute.to_string_lossy()).expect("must resolve an absolute path");
+        let resolved = resolve_project_path(&absolute.to_string_lossy())
+            .expect("must resolve an absolute path");
 
         assert_eq!(project_name_from_path(&resolved), "ops-pilot-resolve-check");
     }

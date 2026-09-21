@@ -32,18 +32,15 @@ impl ProcessOutcome {
 
     /// Whether the operation succeeded
     pub fn is_ok(&self) -> bool {
-        !matches!(
-            self,
-            ProcessOutcome::Error(_) | ProcessOutcome::NotFound(_)
-        )
+        !matches!(self, ProcessOutcome::Error(_) | ProcessOutcome::NotFound(_))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::ProcessState;
     use crate::ProcessRequest;
+    use crate::registry::ProcessState;
 
     fn snapshot() -> ProcessSnapshot {
         let request = ProcessRequest {
@@ -52,9 +49,10 @@ mod tests {
             working_directory: ".".to_string(),
         };
 
-        crate::registry::ProcessRecord::failed(request, std::sync::Arc::new(
-            crate::log_buffer::LogBuffer::new(2),
-        ))
+        crate::registry::ProcessRecord::failed(
+            request,
+            std::sync::Arc::new(crate::log_buffer::LogBuffer::new(2)),
+        )
         .snapshot()
     }
 
@@ -63,7 +61,10 @@ mod tests {
         let outcome = ProcessOutcome::Started(snapshot());
 
         assert!(outcome.is_ok());
-        assert_eq!(outcome.snapshot().map(|s| s.label.as_str()), Some("frontend"));
+        assert_eq!(
+            outcome.snapshot().map(|s| s.label.as_str()),
+            Some("frontend")
+        );
     }
 
     #[test]
@@ -71,12 +72,11 @@ mod tests {
         let outcome = ProcessOutcome::Error("nope".to_string());
 
         assert!(!outcome.is_ok());
-        assert!(outcome.snapshot().is_none());
         assert_eq!(outcome.snapshot(), None);
-        assert!(matches!(
+        assert_eq!(
             ProcessOutcome::NotFound("backend".to_string()).snapshot(),
             None
-        ));
+        );
         let _ = ProcessState::Running;
     }
 
