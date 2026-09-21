@@ -154,10 +154,10 @@ pub fn run_diagnostics(project_path: &str, model: &ProjectModel) -> DiagnosticsR
 
     // Check service ports (frontend/backend) if they are configured
     if let Some(frontend) = &model.frontend {
-        checks.push(service_reachability_check("frontend", frontend.port, "Frontend service"));
+        checks.push(service_reachability_check("frontend", frontend.port, "Frontend"));
     }
     if let Some(backend) = &model.backend {
-        checks.push(service_reachability_check("backend", backend.port, "Backend service"));
+        checks.push(service_reachability_check("backend", backend.port, "Backend"));
     }
 
     DiagnosticsReport::new(checks)
@@ -276,9 +276,9 @@ fn service_reachability_check(service_type: &str, port: u16, label: &str) -> Dia
             format!("{} Reachability", label),
             format!("{} port {} is not listening", label, port),
             format!("port {} is available (no process listening)", port),
-            format!("Start the {} service or verify the port configuration.", label.to_lowercase()),
+            format!("Start the {} service or verify the port configuration.", label),
         )
-        .with_cause(format!("the {} server is not running or is listening on a different port", label.to_lowercase()))
+        .with_cause(format!("the {} server is not running or is listening on a different port", service_type))
     } else {
         let process = status.process.unwrap_or_else(|| "unknown process".to_string());
         let pid = status.pid.unwrap_or(0);
@@ -406,8 +406,11 @@ pub fn tool_available(tool: &str) -> bool {
 fn command_for(tool: &str) -> Command {
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
         let mut command = Command::new("cmd");
         command.args(["/C", tool, "--version"]);
+        // Probes run on every diagnostics pass and validation; never flash a console.
+        command.creation_flags(0x0800_0000);
         command
     }
 

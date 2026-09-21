@@ -58,36 +58,78 @@ impl Detector for PrismaDetector {
 
 /// Extract the `provider = "..."` value from a Prisma schema.
 ///
-/// Tolerant of formatting: the left-hand side of the assignment only has to end
-/// in `provider`, so both multi-line schemas and single-line `datasource db { provider = "postgresql" }`
-/// fragments are recognised.
+/// Only the `provider` inside a `datasource` block counts. Schemas also
+/// contain a `generator` block with e.g. `provider = "prisma-client-js"`,
+/// which must never be mistaken for the database provider.
 fn provider_from_schema(schema: &str) -> Option<String> {
-    schema.lines().find_map(|line| {
-        let (left, right) = line.split_once('=')?;
+    let mut in_datasource = false;
+    let mut depth: i32 = 0;
 
-        let is_provider = left
-            .trim_end()
-            .to_lowercase()
-            .rsplit([' ', '\t', '{'])
-            .next()
-            .is_some_and(|token| token == "provider");
-
-        if !is_provider {
-            return None;
+    for line in schema.lines() {
+        if !in_datasource {
+            if line.trim_start().to_lowercase().starts_with("datasource") {
+                let opens = line.matches('{').count() as i32;
+                let closes = line.matches('}').count() as i32;
+                if opens == 0 {
+                    // `datasource db` with the brace on a following line.
+                    in_datasource = true;
+                    depth = 0;
+                } else {
+                    // The block opens (and maybe closes) on this line.
+                    if let Some(provider) = provider_from_line(line) {
+                        return Some(provider);
+                    }
+                    if closes >= opens {
+                        continue;
+                    }
+                    in_datasource = true;
+                    depth = opens - closes;
+                }
+            }
+            continue;
         }
 
-        // Stop at the closing quote, brace or whitespace so that both
-        // `"postgresql"` and `"mysql" }` yield the bare provider name.
-        let value = right
-            .trim()
-            .trim_start_matches('"')
-            .split(|character: char| character == '"' || character == '}' || character.is_whitespace())
-            .next()
-            .unwrap_or_default()
-            .to_lowercase();
+        if let Some(provider) = provider_from_line(line) {
+            return Some(provider);
+        }
 
-        (!value.is_empty()).then_some(value)
-    })
+        depth += line.matches('{').count() as i32;
+        depth -= line.matches('}').count() as i32;
+        if depth <= 0 {
+            in_datasource = false;
+            depth = 0;
+        }
+    }
+
+    None
+}
+
+/// Extract a `provider = "..."` assignment from a single line.
+fn provider_from_line(line: &str) -> Option<String> {
+    let (left, right) = line.split_once('=')?;
+
+    let is_provider = left
+        .trim_end()
+        .to_lowercase()
+        .rsplit([' ', '\t', '{'])
+        .next()
+        .is_some_and(|token| token == "provider");
+
+    if !is_provider {
+        return None;
+    }
+
+    // Stop at the closing quote, brace or whitespace so that both
+    // `"postgresql"` and `"mysql" }` yield the bare provider name.
+    let value = right
+        .trim()
+        .trim_start_matches('"')
+        .split(|character: char| character == '"' || character == '}' || character.is_whitespace())
+        .next()
+        .unwrap_or_default()
+        .to_lowercase();
+
+    (!value.is_empty()).then_some(value)
 }
 
 #[cfg(test)]
@@ -117,5 +159,26 @@ mod tests {
     #[test]
     fn ignores_schemas_without_a_provider() {
         assert_eq!(provider_from_schema("model User {\n  id Int @id\n}\n"), None);
+    }
+
+    #[test]
+    fn ignores_the_generator_provider() {
+        let schema = "generator client {\n  provider = \"prisma-client-js\"\n}\n\ndatasource db {\n  provider = \"sqlite\"\n  url = \"file:./dev.db\"\n}\n";
+
+        assert_eq!(provider_from_schema(schema).as_deref(), Some("sqlite"));
+    }
+
+    #[test]
+    fn generator_without_datasource_yields_no_provider() {
+        let schema = "generator client {\n  provider = \"prisma-client-js\"\n}\n";
+
+        assert_eq!(provider_from_schema(schema), None);
+    }
+
+    #[test]
+    fn reads_the_provider_from_a_single_line_datasource() {
+        let schema = "generator client { provider = \"prisma-client-js\" }\ndatasource db { provider = \"postgresql\" }";
+
+        assert_eq!(provider_from_schema(schema).as_deref(), Some("postgresql"));
     }
 }

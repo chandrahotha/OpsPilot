@@ -33,7 +33,7 @@ pub use plan::{
     StartupPlan, StartupStep, build_startup_plan, command_is_declared, command_tool,
     validate_plan_ports, validate_step,
 };
-pub use platform::{current_platform, shell_command, stop_tree_command};
+pub use platform::{current_platform, kill_tree_command, shell_command, stop_tree_command};
 pub use registry::{ProcessRecord, ProcessSnapshot, ProcessState};
 pub use unified_log::UnifiedLogStream;
 

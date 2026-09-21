@@ -71,9 +71,23 @@ pub enum DockerOutcome {
     Error(String),
 }
 
+/// Build a `docker` CLI command that never pops up a console window.
+///
+/// Without `CREATE_NO_WINDOW`, every Docker probe flashes a console on
+/// Windows — including the ones behind container-list refreshes.
+fn docker_command() -> Command {
+    let mut command = Command::new("docker");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    command
+}
+
 /// Check if Docker CLI is available and get version
 pub fn docker_version() -> Option<String> {
-    Command::new("docker")
+    docker_command()
         .args(["--version"])
         .output()
         .ok()
@@ -84,7 +98,7 @@ pub fn docker_version() -> Option<String> {
 
 /// Check if Docker daemon is running
 pub fn docker_available() -> bool {
-    Command::new("docker")
+    docker_command()
         .args(["info"])
         .output()
         .map(|o| o.status.success())
@@ -93,7 +107,7 @@ pub fn docker_available() -> bool {
 
 /// Check if Docker Compose is available (v2 plugin)
 pub fn compose_available() -> bool {
-    Command::new("docker")
+    docker_command()
         .args(["compose", "version"])
         .output()
         .map(|o| o.status.success())
@@ -135,7 +149,7 @@ pub fn list_containers() -> DockerOutcome {
         return DockerOutcome::Unavailable("Docker daemon is not running".to_string());
     }
 
-    let output = Command::new("docker")
+    let output = docker_command()
         .args([
             "ps",
             "-a",
@@ -164,7 +178,7 @@ pub fn start_container(name: &str) -> DockerOutcome {
         return DockerOutcome::Unavailable("Docker daemon is not running".to_string());
     }
 
-    let output = Command::new("docker")
+    let output = docker_command()
         .args(["start", name])
         .output();
 
@@ -186,7 +200,7 @@ pub fn stop_container(name: &str) -> DockerOutcome {
         return DockerOutcome::Unavailable("Docker daemon is not running".to_string());
     }
 
-    let output = Command::new("docker")
+    let output = docker_command()
         .args(["stop", name])
         .output();
 
@@ -208,7 +222,7 @@ pub fn restart_container(name: &str) -> DockerOutcome {
         return DockerOutcome::Unavailable("Docker daemon is not running".to_string());
     }
 
-    let output = Command::new("docker")
+    let output = docker_command()
         .args(["restart", name])
         .output();
 
@@ -230,7 +244,7 @@ pub fn container_logs(name: &str) -> DockerOutcome {
         return DockerOutcome::Unavailable("Docker daemon is not running".to_string());
     }
 
-    let output = Command::new("docker")
+    let output = docker_command()
         .args(["logs", "--tail", "100", name])
         .output();
 
@@ -262,7 +276,7 @@ pub fn rebuild_image(service: &str) -> DockerOutcome {
         return DockerOutcome::Unavailable("Docker Compose is not available".to_string());
     }
 
-    let output = Command::new("docker")
+    let output = docker_command()
         .args(["compose", "build", "--no-cache", service])
         .output();
 
@@ -277,6 +291,64 @@ pub fn rebuild_image(service: &str) -> DockerOutcome {
             DockerOutcome::Error(format!("docker compose build {service} failed: {stderr}"))
         }
         Err(e) => DockerOutcome::Error(format!("failed to execute docker compose build: {e}")),
+    }
+}
+
+/// Start all services declared in the project's compose file (`docker compose up -d`).
+///
+/// Runs with `project_dir` as the working directory so the compose file is
+/// found without requiring `-f` flags or absolute paths.
+pub fn compose_up(project_dir: &str) -> DockerOutcome {
+    if !docker_available() {
+        return DockerOutcome::Unavailable("Docker daemon is not running".to_string());
+    }
+
+    if !compose_available() {
+        return DockerOutcome::Unavailable("Docker Compose is not available".to_string());
+    }
+
+    let output = docker_command()
+        .args(["compose", "up", "-d"])
+        .current_dir(project_dir)
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            DockerOutcome::Started(vec![stdout.trim().to_string()])
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            DockerOutcome::Error(format!("docker compose up failed: {stderr}"))
+        }
+        Err(e) => DockerOutcome::Error(format!("failed to execute docker compose up: {e}")),
+    }
+}
+
+/// Stop all services started from the project's compose file (`docker compose down`).
+pub fn compose_down(project_dir: &str) -> DockerOutcome {
+    if !docker_available() {
+        return DockerOutcome::Unavailable("Docker daemon is not running".to_string());
+    }
+
+    if !compose_available() {
+        return DockerOutcome::Unavailable("Docker Compose is not available".to_string());
+    }
+
+    let output = docker_command()
+        .args(["compose", "down"])
+        .current_dir(project_dir)
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            DockerOutcome::Stopped(vec!["compose project".to_string()])
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            DockerOutcome::Error(format!("docker compose down failed: {stderr}"))
+        }
+        Err(e) => DockerOutcome::Error(format!("failed to execute docker compose down: {e}")),
     }
 }
 
@@ -327,5 +399,32 @@ mod tests {
         // Use truly malformed JSON to test error handling
         let containers = parse_containers_json("not json\n{invalid");
         assert!(containers.is_empty());
+    }
+
+    #[test]
+    fn compose_up_in_a_dir_without_a_compose_file_fails_cleanly() {
+        // Uses a throwaway directory so this test never touches a real project.
+        // With no compose file present the outcome must be Unavailable (no
+        // daemon) or Error (compose failed) -- never a panic, never success.
+        let dir = std::env::temp_dir().join("pilot-test-no-compose");
+        let _ = std::fs::create_dir_all(&dir);
+        let result = compose_up(&dir.to_string_lossy());
+        assert!(matches!(
+            result,
+            DockerOutcome::Unavailable(_) | DockerOutcome::Error(_)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn compose_down_in_a_dir_without_a_compose_file_fails_cleanly() {
+        let dir = std::env::temp_dir().join("pilot-test-no-compose-down");
+        let _ = std::fs::create_dir_all(&dir);
+        let result = compose_down(&dir.to_string_lossy());
+        assert!(matches!(
+            result,
+            DockerOutcome::Unavailable(_) | DockerOutcome::Error(_)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

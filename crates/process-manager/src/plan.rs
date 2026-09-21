@@ -75,8 +75,10 @@ impl StartupPlan {
 
 /// Build the startup sequence for a detected project.
 ///
-/// Database, Docker and migration steps stay warnings on purpose: they arrive
-/// with phases 5 and 6, and inventing commands for them would be a lie.
+/// Database, Docker and migration steps stay warnings on purpose: they are
+/// operated from the Database and Docker panels (with explicit confirmation
+/// for destructive operations), and inventing automatic commands for them
+/// would be a lie.
 pub fn build_startup_plan(model: &ProjectModel, project_path: &str) -> StartupPlan {
     let mut plan = StartupPlan {
         steps: Vec::new(),
@@ -105,6 +107,22 @@ pub fn build_startup_plan(model: &ProjectModel, project_path: &str) -> StartupPl
         (false, Some("django"), Some(command)) => {
             plan.steps.push(StartupStep::new("backend", command, project_path));
         }
+        (false, Some(_), Some(command)) => {
+            // Any other backend framework (express, fastify, koa, nestjs,
+            // fastapi, flask, ...) with a declared run command gets a
+            // backend step. Previously only django was handled here and
+            // every other backend silently produced no step, so Start
+            // failed with "No startup step found".
+            plan.steps.push(StartupStep::new("backend", command, project_path));
+        }
+        (false, None, Some(command)) => {
+            // A declared run command (dev/start/serve) exists but no
+            // frontend/backend framework was detected (e.g. a plain
+            // package.json with scripts and no known framework
+            // dependency). Expose it as a generic "app" step instead of
+            // silently dropping it, so Start actually does something.
+            plan.steps.push(StartupStep::new("app", command, project_path));
+        }
         (false, Some(framework), _) if model.backend.is_some() => {
             plan.warnings.push(format!(
                 "no start command was declared for the {framework} backend; add it explicitly"
@@ -116,12 +134,21 @@ pub fn build_startup_plan(model: &ProjectModel, project_path: &str) -> StartupPl
                     .to_string(),
             );
         }
-        _ => {}
+        _ => {
+            // No frontend, no backend and no declared run command.
+            // Say so explicitly instead of silently producing an empty plan.
+            if plan.steps.is_empty() {
+                plan.warnings.push(
+                    "no startable service was detected; declare a dev/start/serve command to enable Start"
+                        .to_string(),
+                );
+            }
+        }
     }
 
     if model.orm.is_some() {
         plan.warnings.push(
-            "database migrations are not automatic yet; they arrive with phase 6".to_string(),
+            "database migrations are not automatic; run them from the Database panel".to_string(),
         );
     }
 
@@ -130,13 +157,13 @@ pub fn build_startup_plan(model: &ProjectModel, project_path: &str) -> StartupPl
         .is_some_and(|docker| docker.compose || docker.detected)
     {
         plan.warnings.push(
-            "Docker services are not started automatically yet; they arrive with phase 5".to_string(),
+            "Docker services are not started automatically; manage them from the Docker panel".to_string(),
         );
     }
 
     if model.database.is_some() && !plan.executable() {
         plan.warnings.push(
-            "the database has no managed service yet; it arrives with phase 6".to_string(),
+            "the database has no managed service; operate it from the Database panel".to_string(),
         );
     }
 
@@ -225,6 +252,8 @@ pub fn command_is_declared(model: &ProjectModel, service: &str, command: &str) -
 
 /// The services a startup step may address
 fn known_service(service: &str) -> bool {
+    matches!(service, "frontend" | "backend" | "app")
+}
 
 #[cfg(test)]
 mod tests {
@@ -310,7 +339,7 @@ mod tests {
         let plan = build_startup_plan(&model, ".");
 
         assert_eq!(plan.steps.len(), 1);
-        assert!(plan.warnings.iter().any(|warning| warning.contains("phase 5")));
+        assert!(plan.warnings.iter().any(|warning| warning.contains("Docker panel")));
     }
 
     #[test]
@@ -353,6 +382,51 @@ mod tests {
         assert!(!command_is_declared(&model, "frontend", "npm install"));
         assert!(!command_is_declared(&model, "database", "npm run dev"));
     }
-}
-    matches!(service, "frontend" | "backend")
+
+    #[test]
+    fn a_non_django_backend_with_a_run_command_gets_a_backend_step() {
+        let mut model = ProjectModel::new("demo", ".");
+        model.backend = Some(BackendInfo::new("fastapi", 8000));
+        model
+            .commands
+            .push(CommandInfo::new("dev", "uvicorn main:app --reload", "package.json scripts"));
+
+        let plan = build_startup_plan(&model, ".");
+
+        assert_eq!(plan.steps.len(), 1);
+        assert_eq!(plan.steps[0].service, "backend");
+        assert_eq!(plan.steps[0].command, "uvicorn main:app --reload");
+        assert!(plan.executable());
+    }
+
+    #[test]
+    fn a_run_command_without_a_detected_framework_gets_an_app_step() {
+        let mut model = ProjectModel::new("demo", ".");
+        model
+            .commands
+            .push(CommandInfo::new("start", "node server.js", "package.json scripts"));
+
+        let plan = build_startup_plan(&model, ".");
+
+        assert_eq!(plan.steps.len(), 1);
+        assert_eq!(plan.steps[0].service, "app");
+        assert!(plan.executable());
+    }
+
+    #[test]
+    fn an_empty_project_plan_explains_itself() {
+        let model = ProjectModel::new("demo", ".");
+
+        let plan = build_startup_plan(&model, ".");
+
+        assert!(!plan.executable());
+        assert!(!plan.warnings.is_empty());
+    }
+
+    #[test]
+    fn app_is_a_known_service() {
+        let model = node_model("npm run dev");
+
+        assert!(command_is_declared(&model, "app", "npm run dev"));
+    }
 }

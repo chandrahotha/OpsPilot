@@ -32,6 +32,8 @@ pub struct ProcessSnapshot {
     pub label: String,
     /// Command that was executed
     pub command: String,
+    /// Directory the command runs in (scopes the label to one project)
+    pub working_directory: String,
     /// Operating system process id, while it is alive
     pub pid: Option<u32>,
     /// Lifecycle state
@@ -197,6 +199,7 @@ impl ProcessRecord {
         ProcessSnapshot {
             label: self.request.label.clone(),
             command: self.request.command.clone(),
+            working_directory: self.request.working_directory.clone(),
             pid: running.then_some(self.pid),
             state,
             started_at_ms: Some(self.started_at_ms),

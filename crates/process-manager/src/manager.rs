@@ -2,7 +2,7 @@ use crate::capture::spawn_output_readers;
 use crate::history::{HistoryEntry, OperationHistory};
 use crate::log_buffer::LogBuffer;
 use crate::outcome::ProcessOutcome;
-use crate::platform::{current_platform, shell_command, stop_tree_command};
+use crate::platform::{current_platform, kill_tree_command, shell_command, stop_tree_command};
 use crate::registry::{ProcessRecord, ProcessSnapshot, ProcessState};
 use crate::ProcessRequest;
 use std::collections::HashMap;
@@ -30,6 +30,11 @@ pub trait ProcessManager: Send + Sync {
 
     /// Stop a process Pilot started, together with its child processes
     fn stop(&self, label: &str) -> ProcessOutcome;
+
+    /// Force-terminate a process Pilot started, without a graceful wait.
+    ///
+    /// Reserved for stuck processes: normal stops must use `stop`.
+    fn kill(&self, label: &str) -> ProcessOutcome;
 
     /// Stop a process and start it again with the same command
     fn restart(&self, label: &str) -> ProcessOutcome;
@@ -249,6 +254,42 @@ impl LocalProcessManager {
         });
     }
 
+    /// Force-terminate a tracked process without a graceful wait.
+    fn kill_process(&self, record: &Arc<ProcessRecord>) -> ProcessOutcome {
+        let label = record.request.label.clone();
+
+        self.refresh(record);
+
+        if !record.is_running() {
+            let detail = "was not running anymore".to_string();
+            record.set_state(ProcessState::Exited);
+
+            let snapshot = record.snapshot();
+
+            return ProcessOutcome::Stopped(ProcessSnapshot { detail, ..snapshot });
+        }
+
+        record
+            .logs
+            .push_system(&label, format!("force terminating (pid {})", record.pid));
+
+        // No waiting: signal the tree, then kill the direct child at once.
+        let _ = kill_tree_command(record.pid).output();
+
+        if let Some(mut child) = record.take_child() {
+            let _ = child.kill();
+            let code = child.wait().ok().and_then(|status| status.code());
+            record.set_exit_code(code);
+        }
+
+        record.set_state(ProcessState::Stopped);
+        self.history.record("kill", label.clone());
+
+        let snapshot = record.snapshot();
+        let detail = "force terminated by Pilot".to_string();
+        ProcessOutcome::Stopped(ProcessSnapshot { detail, ..snapshot })
+    }
+
     /// Update a record from the operating system, without overriding a stop
     fn refresh(&self, record: &Arc<ProcessRecord>) {
         let exit = {
@@ -289,6 +330,19 @@ impl ProcessManager for LocalProcessManager {
         };
 
         self.stop_process(&record)
+    }
+
+    fn kill(&self, label: &str) -> ProcessOutcome {
+        let record = {
+            let records = self.lock_records();
+
+            match records.get(label) {
+                Some(record) => Arc::clone(record),
+                None => return ProcessOutcome::NotFound(label.to_string()),
+            }
+        };
+
+        self.kill_process(&record)
     }
 
     fn restart(&self, label: &str) -> ProcessOutcome {
@@ -341,5 +395,96 @@ impl ProcessManager for LocalProcessManager {
 
     fn history(&self) -> Vec<HistoryEntry> {
         self.history.snapshot(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::registry::ProcessState;
+
+    /// A command that sleeps ~30s on any platform.
+    ///
+    /// Note: `timeout.exe` cannot be used here — it exits immediately when
+    /// its output is redirected, and Pilot always pipes child output.
+    #[cfg(windows)]
+    fn sleeper_command() -> &'static str {
+        "ping -n 30 127.0.0.1 >nul"
+    }
+
+    #[cfg(not(windows))]
+    fn sleeper_command() -> &'static str {
+        "sleep 30"
+    }
+
+    fn sleeper_request(label: &str) -> ProcessRequest {
+        ProcessRequest::new(label, sleeper_command(), ".")
+    }
+
+    #[test]
+    fn kill_force_terminates_a_running_process() {
+        let manager = LocalProcessManager::new();
+
+        assert!(manager.start(&sleeper_request("kill-me")).is_ok());
+
+        match manager.kill("kill-me") {
+            ProcessOutcome::Stopped(snapshot) => {
+                assert_eq!(snapshot.state, ProcessState::Stopped);
+                assert!(snapshot.detail.contains("force terminated"));
+            }
+            other => panic!("expected Stopped, got {other:?}"),
+        }
+
+        assert!(!manager.status("kill-me").is_ok() || {
+            matches!(
+                manager.status("kill-me"),
+                ProcessOutcome::Snapshot(ref snapshot)
+                    if snapshot.state != ProcessState::Running
+            )
+        });
+    }
+
+    #[test]
+    fn kill_of_an_unknown_label_reports_not_found() {
+        let manager = LocalProcessManager::new();
+
+        assert!(matches!(
+            manager.kill("no-such-service"),
+            ProcessOutcome::NotFound(_)
+        ));
+    }
+
+    #[test]
+    fn kill_of_an_exited_process_reports_it_ended() {
+        let manager = LocalProcessManager::new();
+
+        #[cfg(windows)]
+        let quick = ProcessRequest::new("quick-exit", "ping -n 1 127.0.0.1 >nul", ".");
+        #[cfg(not(windows))]
+        let quick = ProcessRequest::new("quick-exit", "true", ".");
+
+        assert!(manager.start(&quick).is_ok());
+
+        // Wait until the watcher observes the exit (up to ~5s).
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match manager.status("quick-exit") {
+                ProcessOutcome::Snapshot(snapshot) if snapshot.state == ProcessState::Exited => {
+                    break;
+                }
+                _ => {}
+            }
+            if Instant::now() >= deadline {
+                panic!("quick command did not exit in time");
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        match manager.kill("quick-exit") {
+            ProcessOutcome::Stopped(snapshot) => {
+                assert!(snapshot.detail.contains("not running anymore"));
+            }
+            other => panic!("expected Stopped, got {other:?}"),
+        }
     }
 }
