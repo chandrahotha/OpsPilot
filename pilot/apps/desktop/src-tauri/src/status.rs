@@ -7,6 +7,7 @@
 
 use pilot_core::ProjectModel;
 use pilot_port_manager::inspect_port;
+use pilot_process_manager::{ProcessManager, ProcessOutcome, ProcessState, build_startup_plan};
 use serde::Serialize;
 
 /// Observed state of a service
@@ -105,7 +106,7 @@ pub fn build_status(model: &ProjectModel) -> Vec<ServiceStatus> {
         services.push(ServiceStatus::unknown(
             "database",
             "Database",
-            "detected via Docker Compose (port unknown; phase 5 will add probe support)",
+            "detected via Docker Compose (port unknown, so the state is not observable)",
         ));
     }
 
@@ -113,11 +114,96 @@ pub fn build_status(model: &ProjectModel) -> Vec<ServiceStatus> {
         services.push(ServiceStatus::unknown(
             "docker",
             "Docker",
-            "container state requires the Docker integration (phase 5)",
+            "container state is managed from the Docker panel",
         ));
     }
 
+    // Startup steps without a port-observable service (e.g. the generic
+    // "app" step for a declared run script with no detected framework)
+    // still need a card in the GUI. Without this, get_status returns an
+    // empty list while a startup step exists, so the user has no Start
+    // button to click even though the project is startable.
+    let plan = build_startup_plan(model, &model.project.path);
+    for step in &plan.steps {
+        if !services.iter().any(|service| service.key == step.service) {
+            services.push(ServiceStatus::unknown(
+                &step.service,
+                &display_label(&step.service),
+                &format!(
+                    "{}; no port declared so the state is not observable yet",
+                    step.description
+                ),
+            ));
+        }
+    }
+
+    // A service Pilot itself started counts as running even when its
+    // declared port is not accepting connections yet (still booting, or the
+    // project listens on a different port than the scanner detected).
+    // Without this, Start stays enabled after a successful start and invites
+    // duplicate-start errors.
+    overlay_tracked_state(&mut services, &model.project.path);
+
     services
+}
+
+/// Overlay Pilot's tracked-process state onto port-observed statuses.
+///
+/// Scoped by working directory so a same-named service started for another
+/// project is never misattributed to this one.
+fn overlay_tracked_state(services: &mut [ServiceStatus], project_path: &str) {
+    let manager = crate::get_process_manager();
+
+    for service in services.iter_mut() {
+        if !matches!(service.key.as_str(), "frontend" | "backend" | "app") {
+            continue;
+        }
+
+        let ProcessOutcome::Snapshot(snapshot) = manager.status(&service.key) else {
+            continue;
+        };
+
+        if !snapshot
+            .working_directory
+            .eq_ignore_ascii_case(project_path)
+        {
+            continue;
+        }
+
+        match snapshot.state {
+            ProcessState::Running => {
+                if service.state != ServiceState::Running {
+                    service.state = ServiceState::Running;
+                    service.detail = match service.port {
+                        Some(port) => format!(
+                            "started by Pilot (pid {:?}); port {port} is not accepting connections yet",
+                            snapshot.pid
+                        ),
+                        None => format!(
+                            "started by Pilot (pid {:?}); no port declared so the state comes from the process",
+                            snapshot.pid
+                        ),
+                    };
+                }
+            }
+            ProcessState::Exited | ProcessState::Failed => {
+                if service.state == ServiceState::Stopped {
+                    service.detail =
+                        format!("{}; Pilot-started process ended ({})", service.detail, snapshot.detail);
+                }
+            }
+            ProcessState::Stopped => {}
+        }
+    }
+}
+
+/// Human-readable label for a startup-step service key ("app" -> "App").
+fn display_label(service: &str) -> String {
+    let mut chars = service.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => service.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -222,7 +308,7 @@ mod tests {
 
         assert_eq!(docker.state, ServiceState::Unknown);
         assert!(docker.port.is_none());
-        assert!(docker.detail.contains("phase 5"));
+        assert!(docker.detail.contains("Docker panel"));
     }
 
     #[test]
@@ -232,5 +318,121 @@ mod tests {
 
         assert_eq!(json["key"], "docker");
         assert_eq!(json["state"], "unknown");
+    }
+
+    /// A command that sleeps ~30s on any platform, so the test can observe
+    /// the Running state before stopping it again.
+    ///
+    /// Note: `timeout.exe` cannot be used here — it exits immediately when
+    /// its output is redirected, and Pilot always pipes child output.
+    #[cfg(windows)]
+    fn sleeper_command() -> &'static str {
+        "ping -n 30 127.0.0.1 >nul"
+    }
+
+    #[cfg(not(windows))]
+    fn sleeper_command() -> &'static str {
+        "sleep 30"
+    }
+
+    #[test]
+    fn a_pilot_started_process_overrides_a_closed_port() {
+        use pilot_process_manager::{ProcessManager, ProcessRequest};
+
+        let _lock = port_lock();
+
+        // A port that is currently free.
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("must bind");
+        let port = listener.local_addr().expect("must have an address").port();
+        drop(listener);
+        assert!(
+            wait_until_free(port),
+            "port {port} should be free again after the listener is dropped"
+        );
+
+        let mut model = ProjectModel::new("demo", ".");
+        model.frontend = Some(FrontendInfo::new("vite", port));
+
+        let manager = crate::get_process_manager();
+        // Clean up a leftover from an earlier aborted run, if any.
+        let _ = manager.stop("frontend");
+        let request = ProcessRequest::new("frontend", sleeper_command(), ".");
+        assert!(
+            matches!(
+                manager.start(&request),
+                pilot_process_manager::ProcessOutcome::Started(_)
+            ),
+            "the sleeper process must start"
+        );
+
+        let services = build_status(&model);
+        let frontend = services
+            .iter()
+            .find(|service| service.key == "frontend")
+            .expect("frontend must be reported");
+
+        assert_eq!(frontend.state, ServiceState::Running);
+        assert!(frontend.detail.contains("started by Pilot"));
+
+        let _ = manager.stop("frontend");
+    }
+
+    #[test]
+    fn tracked_state_from_another_project_is_not_attributed() {
+        use pilot_process_manager::{ProcessManager, ProcessRequest};
+
+        let _lock = port_lock();
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("must bind");
+        let port = listener.local_addr().expect("must have an address").port();
+        drop(listener);
+        assert!(
+            wait_until_free(port),
+            "port {port} should be free again after the listener is dropped"
+        );
+
+        let manager = crate::get_process_manager();
+        let _ = manager.stop("backend");
+        let request = ProcessRequest::new("backend", sleeper_command(), ".");
+        assert!(
+            matches!(
+                manager.start(&request),
+                pilot_process_manager::ProcessOutcome::Started(_)
+            ),
+            "the sleeper process must start"
+        );
+
+        // Same label, different project directory: the overlay must not apply.
+        let mut other = ProjectModel::new("other", "some/other/project");
+        other.backend = Some(pilot_core::BackendInfo::new("express", port));
+        let services = build_status(&other);
+        let backend = services
+            .iter()
+            .find(|service| service.key == "backend")
+            .expect("backend must be reported");
+
+        assert_eq!(backend.state, ServiceState::Stopped);
+        assert!(!backend.detail.contains("started by Pilot"));
+
+        let _ = manager.stop("backend");
+    }
+
+    #[test]
+    fn a_run_script_without_a_framework_still_gets_a_service_card() {
+        use pilot_core::CommandInfo;
+
+        let mut model = ProjectModel::new("demo", ".");
+        model
+            .commands
+            .push(CommandInfo::new("start", "node server.js", "package.json scripts"));
+
+        let services = build_status(&model);
+
+        let app = services
+            .iter()
+            .find(|service| service.key == "app")
+            .expect("app step must produce a service card");
+        assert_eq!(app.label, "App");
+        assert_eq!(app.state, ServiceState::Unknown);
     }
 }

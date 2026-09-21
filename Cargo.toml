@@ -26,6 +26,5 @@ members = [
   "crates/docker",
   "crates/database",
   "crates/diagnostics",
-  "crates/integrations",
   "pilot/apps/desktop/src-tauri",
 ]

@@ -5,6 +5,11 @@
  *  - `ScanResult` / `ProjectModel`     <- crates/core
  *  - `ServiceStatus`                   <- pilot/apps/desktop/src-tauri/src/status.rs
  *  - `DiagnosticsReport`               <- crates/diagnostics
+ *  - `StartupPlan`                     <- crates/process-manager (via Tauri StartupPlanResponse)
+ *  - `DockerOutcome` / `ContainerStatus` <- crates/docker
+ *  - `DatabaseOutcome`                 <- crates/database
+ *  - `LogEntry`                        <- crates/process-manager
+ *  - `SystemHealth`                    <- Tauri system_health command
  */
 
 /** Frontend framework information */
@@ -49,6 +54,13 @@ export interface ProjectInfo {
   path: string;
 }
 
+/** A declared project command (e.g. package.json scripts) */
+export interface CommandInfo {
+  name: string;
+  command: string;
+  source: string;
+}
+
 /** Normalized project model produced by the scanner */
 export interface ProjectModel {
   project: ProjectInfo;
@@ -58,6 +70,7 @@ export interface ProjectModel {
   orm?: OrmInfo;
   docker?: DockerInfo;
   environment?: EnvironmentInfo;
+  commands?: CommandInfo[];
 }
 
 /** Result of scanning a project directory */
@@ -74,7 +87,7 @@ export type ServiceState = 'running' | 'stopped' | 'unknown';
 export interface ServiceStatus {
   key: string;
   label: string;
-  port?: number;
+  port?: number | null;
   state: ServiceState;
   detail: string;
 }
@@ -94,4 +107,108 @@ export interface DiagnosticCheck {
 export interface DiagnosticsReport {
   checks: DiagnosticCheck[];
   issues: number;
+}
+
+/** One ordered step of a startup sequence */
+export interface StartupStep {
+  service: string;
+  description: string;
+  command: string;
+  workingDirectory: string;
+}
+
+/** A startup sequence the user can review before Pilot runs anything */
+export interface StartupPlan {
+  executable: boolean;
+  steps: StartupStep[];
+  warnings: string[];
+}
+
+/** Status of a single Docker container (serde externally-tagged via DockerOutcome) */
+export interface ContainerStatus {
+  name: string;
+  id: string;
+  image: string;
+  running: boolean;
+  status: string;
+  ports: string[];
+  composeProject?: string;
+  composeService?: string;
+}
+
+/**
+ * Outcome of a Docker operation.
+ * Mirrors the serde externally-tagged JSON: exactly one key is present.
+ */
+export type DockerOutcome =
+  | { status: { available: boolean; version?: string | null } }
+  | { containers: ContainerStatus[] }
+  | { started: string[] }
+  | { stopped: string[] }
+  | { restarted: string[] }
+  | { logs: { container: string; output: string } }
+  | { rebuilt: { image: string } }
+  | { unavailable: string }
+  | { error: string };
+
+/** Risk level of a database operation */
+export type RiskLevel = 'low' | 'medium' | 'high';
+
+/**
+ * Outcome of a database operation.
+ * Mirrors the serde externally-tagged JSON: exactly one key is present.
+ */
+export type DatabaseOutcome =
+  | { success: { output: string } }
+  | { needsConfirmation: { risk: RiskLevel } }
+  | { error: { message: string; output?: string | null } }
+  | { notImplemented: { reason: string } };
+
+/** Log stream a captured line was read from */
+export type LogStream = 'stdout' | 'stderr' | 'system';
+
+/** One captured process output line */
+export interface LogEntry {
+  timestampMs: number;
+  service: string;
+  stream: LogStream;
+  message: string;
+}
+
+/** Snapshot of a process tracked by Pilot */
+export interface ProcessSnapshot {
+  label: string;
+  command: string;
+  workingDirectory: string;
+  pid?: number | null;
+  state: string;
+  detail: string;
+  exitCode?: number | null;
+  startedAtMs?: number | null;
+}
+
+/** One execution-readiness row in the system health report */
+export interface ReadinessEntry {
+  service: string;
+  command: string;
+  ready: boolean;
+  detail: string;
+}
+
+/** OpsPilot subsystem health + project execution readiness */
+export interface SystemHealth {
+  frontend: boolean;
+  tauriBridge: boolean;
+  rustBackend: boolean;
+  projectScanner: boolean;
+  projectDetected: boolean;
+  projectName?: string | null;
+  projectPath?: string | null;
+  processManager: boolean;
+  trackedProcesses: number;
+  dockerAvailable: boolean;
+  dockerVersion?: string | null;
+  composeAvailable: boolean;
+  readiness: ReadinessEntry[];
+  warnings: string[];
 }

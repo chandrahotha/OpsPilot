@@ -21,6 +21,19 @@ pub const PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 /// How far above a preferred port Pilot searches for a free port
 pub const SEARCH_RANGE: u16 = 20;
 
+/// Build a helper command that never pops up a console window.
+///
+/// On Windows every `Command` without `CREATE_NO_WINDOW` flashes a console.
+/// These helpers run on every status poll, so a visible window would flicker
+/// constantly while the GUI is open.
+#[cfg(windows)]
+fn silent_command(program: &str) -> Command {
+    use std::os::windows::process::CommandExt;
+    let mut command = Command::new(program);
+    command.creation_flags(0x0800_0000);
+    command
+}
+
 /// Port status information
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -122,7 +135,7 @@ impl PortManager {
     /// Windows: Use netstat and tasklist
     #[cfg(windows)]
     fn get_port_owner_windows(&self, port: u16) -> Option<ProcessOwner> {
-        let output = Command::new("cmd")
+        let output = silent_command("cmd")
             .args(["/C", &format!("netstat -ano | findstr :{}", port)])
             .output()
             .ok()?;
@@ -148,7 +161,7 @@ impl PortManager {
 
     #[cfg(windows)]
     fn get_process_info_windows(&self, pid: u32) -> Option<ProcessOwner> {
-        let output = Command::new("cmd")
+        let output = silent_command("cmd")
             .args(["/C", &format!("tasklist /FI \"PID eq {}\" /FO CSV", pid)])
             .output()
             .ok()?;
@@ -161,7 +174,7 @@ impl PortManager {
         for line in stdout.lines().skip(1) {
             if let Some(name) = line.split(',').next() {
                 let name = name.trim_matches('"');
-                let cmd_output = Command::new("cmd")
+                let cmd_output = silent_command("cmd")
                     .args(["/C", &format!("wmic process where ProcessId={} get CommandLine /format:list", pid)])
                     .output()
                     .ok()?;

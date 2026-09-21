@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/schema.json",
-  "identifier": "com.oxpilot.desktop",
+  "identifier": "com.digitracks.opspilot",
   "productName": "OpsPilot",
   "version": "0.1.0",
   "build": {
@@ -26,6 +26,7 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "Digi Tracks",
     "targets": [
       "nsis",
       "dmg",

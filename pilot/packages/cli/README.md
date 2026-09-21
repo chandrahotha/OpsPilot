@@ -42,8 +42,9 @@ build the binary (`cargo build --release --bin pilot`) instead of failing silent
 
 ## Status
 
-Scanning, service status and diagnostics are implemented. Starting, stopping and
-restarting projects is phase 4 of the roadmap; those operations refuse
-explicitly rather than pretending to have run.
+Scanning, service status and diagnostics are implemented. The desktop
+application (see the repository root) adds process lifecycle (start, stop,
+restart, start-all, stop-all, force-kill), Docker and database operations,
+script running, live logs, and system diagnostics on top of the same engine.
 
 Repository: https://github.com/chandrahotha/OpsPilot

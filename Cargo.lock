@@ -322,10 +322,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
- "js-sys",
  "num-traits",
  "serde",
- "wasm-bindgen",
  "windows-link 0.2.1",
 ]
 
@@ -1272,12 +1270,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "http-range"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21dec9db110f5f872ed9699c3ecf50cf16f423502706ba5c72462e28d3157573"
-
-[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2124,9 +2116,10 @@ dependencies = [
 name = "ops-pilot-desktop"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "pilot-core",
+ "pilot-database",
  "pilot-diagnostics",
+ "pilot-docker",
  "pilot-port-manager",
  "pilot-process-manager",
  "pilot-scanner",
@@ -2284,13 +2277,6 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "pilot-integrations"
-version = "0.1.0"
-dependencies = [
- "pilot-scanner",
 ]
 
 [[package]]
@@ -3194,7 +3180,6 @@ dependencies = [
  "gtk",
  "heck 0.5.0",
  "http",
- "http-range",
  "jni",
  "libc",
  "log",

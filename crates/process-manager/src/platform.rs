@@ -6,6 +6,17 @@
 
 use std::process::Command;
 
+/// Hide the child process window on Windows.
+///
+/// Without `CREATE_NO_WINDOW`, every spawned helper (`cmd`, `taskkill`, dev
+/// servers) pops up its own console window, which looks like the app is
+/// opening terminals by itself.
+#[cfg(windows)]
+fn hide_window(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    command.creation_flags(0x0800_0000);
+}
+
 /// Build a command that runs `command` through the platform shell.
 ///
 /// Using the shell keeps behaviour identical to the user's own terminal, which is
@@ -15,6 +26,7 @@ pub fn shell_command(command: &str) -> Command {
     {
         let mut shell = Command::new("cmd");
         shell.arg("/C").arg(command);
+        hide_window(&mut shell);
         shell
     }
 
@@ -39,6 +51,7 @@ pub fn stop_tree_command(pid: u32) -> Command {
             .arg(pid.to_string())
             .arg("/T")
             .arg("/F");
+        hide_window(&mut stop);
         stop
     }
 
@@ -47,6 +60,32 @@ pub fn stop_tree_command(pid: u32) -> Command {
         let mut stop = Command::new("kill");
         stop.arg("-TERM").arg(format!("-{pid}"));
         stop
+    }
+}
+
+/// Build a command that force-terminates a whole process tree.
+///
+/// Unlike [`stop_tree_command`] (which asks Unix process groups to exit via
+/// SIGTERM and waits), this sends SIGKILL on Unix and `taskkill /T /F` on
+/// Windows, then the caller kills the direct child without waiting. Reserved
+/// for stuck processes ("Kill All Nodes"): normal stops must use `stop`.
+pub fn kill_tree_command(pid: u32) -> Command {
+    #[cfg(windows)]
+    {
+        let mut kill = Command::new("taskkill");
+        kill.arg("/PID")
+            .arg(pid.to_string())
+            .arg("/T")
+            .arg("/F");
+        hide_window(&mut kill);
+        kill
+    }
+
+    #[cfg(not(windows))]
+    {
+        let mut kill = Command::new("kill");
+        kill.arg("-KILL").arg(format!("-{pid}"));
+        kill
     }
 }
 

@@ -116,7 +116,7 @@ impl Default for UnifiedLogStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::log_buffer::{LogEntry, LogStream};
+    use crate::log_buffer::LogStream;
 
     #[tokio::test]
     async fn unified_stream_broadcasts_entries() {

@@ -1,14 +1,57 @@
-# OpsPilot — Cross-Platform Project Operations Launcher
+# OpsPilot — Project Command Center
 
 <div align="center">
   <img width="1895" height="725" alt="OpsPilot Dashboard" src="https://github.com/user-attachments/assets/8de1986f-cc08-4386-a510-40df82dd852b" />
   <br/><br/>
-  <strong>Install once. Open any project. Pilot tells you what it is and how to run it.</strong>
+  <strong>Install once. Open any project. Pilot tells you what it is, starts what it needs, and shows you everything that happens.</strong>
 </div>
 
 ---
 
-## Quick Start
+## What it is
+
+Developers keep generating full-stack projects they then struggle to operate:
+which service starts first, which port it uses, how the database migrates,
+where the logs go. OpsPilot turns an unfamiliar project directory into an
+operations console. It scans the project, reports what it found with evidence,
+starts services with one click, streams their logs, runs diagnostics, and
+stops everything cleanly when you are done.
+
+Two interfaces share one Rust engine:
+
+- **Desktop command center** (Tauri + React): service cards, startup plan,
+  one-click Start all / Stop all, Docker and database panels, runnable
+  scripts, live logs with activity feed, diagnostics, and system health.
+- **CLI** (`pilot [path] [--json]`): scan any directory and get a
+  human-readable or machine-readable report.
+
+## How it works
+
+1. **Scan.** Every detector (Node.js, Python/Django, Prisma, Alembic, Docker,
+   Cargo, environment files) checks its marker files and contributes evidence
+   to one normalized `ProjectModel`. Nothing is executed during a scan.
+2. **Plan.** Detected capabilities plus declared commands become an ordered
+   startup plan with validation and honest warnings for what is not automatic.
+3. **Run.** Each step spawns through the platform shell as a tracked process
+   with piped output, a full process-tree stop, and a force-kill path for
+   stuck processes. On Windows everything runs windowless.
+4. **Observe.** Service state comes from real TCP probes merged with tracked
+   process state. Logs stream into per-service buffers. Diagnostics report
+   problem, evidence, cause, and recommended action for every check.
+
+Design rules: no fake success, every detection cites evidence, Pilot tracks
+only processes it started, and the engine runs unchanged on Windows, macOS,
+and Linux.
+
+---
+
+## Install
+
+### Windows installer
+
+Download `OpsPilot_0.1.0_x64-setup.exe` from
+[GitHub Releases](https://github.com/chandrahotha/OpsPilot/releases) and run
+it. Published by Digi Tracks.
 
 ### Global CLI (npm)
 
@@ -18,9 +61,7 @@ cd my-project
 pilot
 ```
 
-`pilot [path] [--json]` scans a directory and reports the detected stack, service ports, database, ORM, Docker and environment files — each with its evidence.
-
-### From Source
+### From source
 
 ```bash
 git clone https://github.com/chandrahotha/OpsPilot
@@ -28,40 +69,50 @@ cd OpsPilot
 npm install
 cargo build --release --bin pilot     # native CLI
 npm install -g ./pilot/packages/cli   # expose it as `pilot`
-npm run dev                           # Tauri window
+npm run dev                           # Tauri development window
 ```
 
-| Command | Purpose |
-```
-OpsPilot/
-├── crates/
-│   ├── core/            → Normalized project model + scan result (shared by all front ends)
-│   ├── scanner/         → Modular detectors (Node.js, Python, Django, Prisma, Alembic, Docker, Cargo, env)
-│   ├── port-manager/    → TCP port inspection + free-port search
-│   ├── diagnostics/     → Deterministic checks with problem/evidence/cause/action
-│   ├── process-manager/ → Lifecycle: start/stop/restart/status, log capture, tree kill, history
-│   ├── docker/          → Docker operations (Phase 5)
-│   ├── database/        → Database operations (Phase 6)
-│   └── integrations/    → Prisma/Django/Alembic/Node/Python operation layer
-├── pilot/
-│   ├── apps/desktop/    → Tauri + React application
-│   └── packages/shared/ → Shared TypeScript contracts (model, commands, diagnostics)
-├── src/main.rs          → `pilot` CLI binary
-├── tests/cli.rs         → End-to-end CLI tests against real fixtures
-└── Cargo.toml           → Rust workspace
-```
+### Build the installer from source (Windows)
 
-### Design Principles
+Requires [NSIS 3.x](https://nsis.sourceforge.io/)
+(`winget install NSIS.NSIS`) so `makensis` is on PATH:
 
-1. **No fake success** — Every operation either happens or returns an explicit `NotImplemented` with the phase it belongs to
-2. **Evidence-based** — Every detection, status, and diagnostic cites its source (file, port, command output)
-3. **Safety first** — Pilot tracks only processes it started; never kills unrelated system processes
-4. **Platform-independent engine** — Rust core runs on Windows, macOS, Linux; only the shell layer differs
-5. **Single source of truth** — The normalized `ProjectModel` is the contract between scanner, CLI, GUI, and integrations
+```bash
+cd pilot/apps/desktop
+npm run build   # vite bundle + tauri build → target/release/bundle/nsis/OpsPilot_0.1.0_x64-setup.exe
+```
 
 ---
 
-## CLI Usage
+## Use
+
+### Desktop
+
+Open the app, choose **Select Project** (or start Pilot inside a project
+folder; the last project reopens automatically). The header shows the project
+name and one overall status: READY, STARTING, RUNNING, STOPPING, DEGRADED,
+FAILED, or NO PROJECT.
+
+- **Services**: one card per detected service with live state, port, and the
+  process behind it. Start, Stop, and Restart appear only where the startup
+  plan can actually run them.
+- **Start all / Stop all**: compose stack first, then every plan step;
+  already-running items are skipped and blocked items explain why. Kill All
+  Nodes force-terminates stuck project processes after confirmation.
+- **Open Frontend**: enabled while the frontend listens; opens the detected
+  URL in the default browser.
+- **Docker panel**: daemon status, container list with start/stop/restart/
+  logs, compose up/down. **Database panel**: status, migrate, seed, backup,
+  plus confirmed reset/restore for Prisma, Django, Alembic, and PostgreSQL.
+- **Scripts panel**: every declared project command, runnable as a tracked
+  process with stop support.
+- **Live logs**: auto-refreshing process output with pause, search, stream
+  filter, and copy, plus a session activity feed of detections, starts,
+  stops, failures, and diagnostics.
+- **Diagnostics / System Diagnostics**: deterministic checks and subsystem
+  health with per-service execution readiness and reasons.
+
+### CLI
 
 ```bash
 pilot                  # scan current directory
@@ -98,61 +149,30 @@ pilot --help           # usage
 
 ---
 
-## Security
+## Project structure
 
-| Check | Result |
-|-------|--------|
-| `npm audit` | **0 vulnerabilities** (vite 7.3.6 / plugin-react 5.2.0 cleared GHSA-67mh-4wv8-2f99) |
-| `cargo audit --file Cargo.lock` | **0 vulnerabilities**, 7 unmaintained/unsound warnings (all transitive in Tauri's tree) |
+```text
+OpsPilot/
+├── crates/
+│   ├── core/            → Normalized project model + scan result (shared by all front ends)
+│   ├── scanner/         → Modular detectors (Node.js, Python, Django, Prisma, Alembic, Docker, Cargo, env)
+│   ├── port-manager/    → TCP port inspection, process ownership, free-port search
+│   ├── diagnostics/     → Deterministic checks with problem/evidence/cause/action
+│   ├── process-manager/ → Lifecycle: start/stop/restart/kill, log capture, tree kill, history, plans
+│   ├── docker/          → Docker operations (containers, compose up/down, logs)
+│   └── database/        → Database operations (Prisma/Django/Alembic/Postgres)
+├── pilot/
+│   ├── apps/desktop/    → Tauri + React command center
+│   └── packages/shared/ → Shared TypeScript contracts mirroring the engine
+├── src/main.rs          → `pilot` CLI binary
+├── tests/cli.rs         → End-to-end CLI tests against real fixtures
+├── docs/                → Architecture, detection, processes, logging, troubleshooting, security
+└── Cargo.toml           → Rust workspace
+```
 
-The Rust warnings are transitive only: `glib` (Linux GTK), `proc-macro-error` (non-Windows), five `unic-*` crates via `urlpattern` → `tauri-utils`. Only Tauri can clear them.
+## Scripts
 
-Re-check anytime: `npm run audit` (requires `cargo install cargo-audit` once).
-
----
-
-## Testing
-
-- **Rust**: `cargo test --workspace` — 92 tests across core, scanner, port-manager, diagnostics, process-manager, docker, database
-- **CLI**: `tests/cli.rs` — executes real binary against throwaway fixture projects
-- **TypeScript**: `npm run typecheck` — shared contracts + desktop app
-- **Launcher**: `node --test` — 9 resolution-order tests
-- **Total**: **101 tests**, all passing
-- **Zero machine-dependent tests** — fixtures created in temp directories, nothing written outside
-
----
-
-## Roadmap
-
-| Phase | Scope | Status |
-|-------|-------|--------|
-| 1 | Architecture: repository, Tauri shell, Rust core, project model, basic GUI | ✅ Done |
-| 2 | Scanner: project detection | ✅ Done |
-| 3 | Dynamic UI: menus from detected capabilities | ✅ Done |
-| 4 | Process lifecycle: start, stop, restart, status, logs, history, startup plans | ✅ **Done** |
-| 5 | Docker: containers, compose, start/stop/restart/logs | ✅ **Done** |
-| 6 | Database: Prisma/PostgreSQL, Django, Alembic (migrate/seed/reset + confirmations) | ✅ **Done** |
-| 7 | Ports: per-port process ownership, safe port changes | ✅ **Done** |
-| 8 | Diagnostics: database/service reachability | ✅ **Done** |
-| 9 | Logs: unified streaming UI | ✅ **Done** |
-| 10 | AI layer (optional) | 📋 Planned |
-| 11 | Packaging: Windows/macOS/Linux installers, platform binary packages | 📋 Planned |
-| 12 | Release: npm publish, GitHub Releases | 📋 Planned |
-
----
-
-## Contributing
-
-1. Fork the repo
-2. Create a feature branch
-3. `npm run check` must pass (typecheck + all tests)
-4. Open a PR with a clear description
-
----
-
-## License
-
-MIT
+| Command | Purpose |
 |---------|---------|
 | `npm run test` | All tests: Rust workspace + npm launcher |
 | `npm run typecheck` | TypeScript check for shared package + desktop app |
@@ -166,23 +186,87 @@ MIT
 
 ---
 
-## What Works Today
+## What works today
 
-| Area | Status | Details |
-|------|--------|---------|
-| **Modular Scanner** | ✅ **Done** | Node.js, Python, Django, Prisma, Alembic, Docker, Cargo, environment files — each finding includes its evidence |
-| **Normalized Project Model** | ✅ **Done** | One canonical `ProjectModel` shared by CLI, GUI, and integrations (`pilot-core`) |
-| **CLI** | ✅ **Done** | `pilot [path] [--json]` — human-readable or JSON output; declares every detected command |
-| **Dynamic GUI** | ✅ **Done** | Tauri + React; dashboard renders *only* detected capabilities |
-| **Service Status** | ✅ **Done** | Real TCP port observation; a service is "running" only when its port accepts connections |
-| **Port Management** | ✅ **Done** | Inspect, find-free-port, **process ownership (PID + name + command)**, safe port changes in project files |
-| **Deterministic Diagnostics** | ✅ **Done** | Runtimes, dependencies, environment, **database reachability, service port reachability** — problem, evidence, cause, recommended action |
-| **Process Lifecycle** | ✅ **Done** | Start / Stop / Restart / Status / Logs / History — real processes, tree kill, log capture, operation history |
-| **Unified Log Streaming** | ✅ **Done** | **Real-time broadcast-based log aggregation** across all services with historical snapshots |
-| **Startup Plans** | ✅ **Done** | Detected capabilities + declared commands → ordered steps + validation + warnings |
-| **Docker Operations** | ✅ **Done** | Container list, start/stop/restart/logs, compose awareness |
-| **Database Operations** | ✅ **Done** | Migrate / seed / reset with destructive-operation confirmations (Prisma, Django, Alembic, PostgreSQL) |
+| Area | Details |
+|------|---------|
+| **Modular scanner** | Node.js, Python, Django, Prisma, Alembic, Docker, Cargo, environment files. Every finding carries its evidence. |
+| **Normalized project model** | One canonical `ProjectModel` shared by CLI, GUI, and operations (`pilot-core`). |
+| **CLI** | `pilot [path] [--json]`. Human-readable or JSON output; declares every detected command. |
+| **Dynamic GUI** | Dashboard renders only detected capabilities. No Docker project shows no Docker panel. |
+| **Service status** | Real TCP probes merged with tracked-process state scoped to the current project. |
+| **Process lifecycle** | Start, Stop, Restart, Start all, Stop all, confirmed Kill All Nodes. Tree kill, log capture, history. Windowless spawning on Windows. |
+| **Startup plans** | Ordered steps with exact commands plus honest warnings, shown before anything runs. |
+| **Docker operations** | Daemon status, container list, start/stop/restart/logs, compose up/down. |
+| **Database operations** | Status, migrate, seed, backup directly; reset/restore behind two-step confirmation. |
+| **Scripts** | Declared project commands run as tracked processes with stop support. |
+| **Live logs** | Auto-refreshing output with pause, search, stream filter, copy, plus a session activity feed. |
+| **Diagnostics** | Runtimes, dependencies, environment, database and service reachability. Each check states problem, evidence, cause, and recommended action. |
+| **System diagnostics** | Subsystem health plus per-service execution readiness with reasons. |
+| **Open Frontend** | Detected URL opened in the default browser, only while actually listening. |
 
 ---
 
-## Architecture
+## Testing
+
+- **Rust**: `cargo test --workspace` — 130 tests across core, scanner, port-manager, diagnostics, process-manager, docker, database, desktop shell, CLI.
+- **TypeScript**: `npm run typecheck` — shared contracts + desktop app.
+- **Launcher**: `node --test` — 9 resolution-order tests.
+- **Total**: **139 tests**, all passing, zero compiler warnings.
+- Fixtures are created in temp directories; nothing is written outside them.
+- `npm run check` (typecheck + all tests) must pass before any PR.
+
+---
+
+## Security
+
+| Check | Result |
+|-------|--------|
+| `npm audit` | **0 vulnerabilities** |
+| `cargo audit --file Cargo.lock` | **0 vulnerabilities** (unmaintained/unsound warnings are transitive in Tauri's tree; only Tauri can clear them) |
+
+Re-check anytime: `npm run audit` (requires `cargo install cargo-audit` once).
+
+Safety model: Pilot runs only declared project commands, tracks only processes
+it started, scopes stops to the current project, confirms destructive database
+operations and force-kills every time, never reads `.env` contents, and sends
+no data anywhere. See `docs/SECURITY.md`.
+
+---
+
+## Roadmap
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| 1–9 | Architecture, scanner, dynamic UI, process lifecycle, Docker, database, ports, diagnostics, logs | ✅ Done |
+| 10 | AI layer (optional) | 📋 Planned |
+| 11 | Packaging: installers, platform binary packages | 🔨 Done for Windows NSIS locally; CI builds all platforms on tag |
+| 12 | Release: npm publish, GitHub Releases | 🔨 CI workflow ready (`.github/workflows/release.yml`); npm publish pending registry access |
+
+---
+
+## Documentation
+
+| Document | Covers |
+| -------- | ------ |
+| `docs/ARCHITECTURE.md` | Engine crates, Tauri shell, React frontend, CLI, data flow |
+| `docs/PROJECT-DETECTION.md` | How the scanner determines what a project contains |
+| `docs/COMMAND-CENTER.md` | The UI and how each control maps to real engine state |
+| `docs/PROCESS-MANAGEMENT.md` | Start, stop, restart, force-kill, state, and safety rules |
+| `docs/LOGGING.md` | Log collection, live logs, and the activity feed |
+| `docs/TROUBLESHOOTING.md` | Common failures and how to diagnose them |
+| `docs/CONTRIBUTING.md` | How to contribute |
+| `docs/SECURITY.md` | Process execution scope, secrets, and safety notes |
+| `Pilot Prerequisite.md` | The original product spec the implementation follows |
+
+## Contributing
+
+See `docs/CONTRIBUTING.md`. In short: fork, branch, keep `npm run check`
+green, update docs with behavior changes, and describe what you verified
+against a real project.
+
+---
+
+## License
+
+MIT

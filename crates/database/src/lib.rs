@@ -7,7 +7,16 @@
 use pilot_process_manager::{LocalProcessManager, ProcessManager, ProcessOutcome, ProcessRequest, ProcessState};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// How long a database operation may run before Pilot stops waiting for it.
+/// Migrations on large schemas can take minutes; the loop polls the process
+/// state instead of sleeping a fixed amount of time.
+const OPERATION_TIMEOUT: Duration = Duration::from_secs(300);
+/// How often the process state is polled while waiting for completion.
+const POLL_INTERVAL: Duration = Duration::from_millis(200);
+/// How many trailing log lines are returned with an operation outcome.
+const LOG_TAIL_LINES: usize = 50;
 
 /// Database operation type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +178,25 @@ impl DatabaseManager {
             };
         }
 
+        match integration.integration_type {
+            IntegrationType::Prisma => self.execute_prisma(integration, operation),
+            IntegrationType::Django => self.execute_django(integration, operation),
+            IntegrationType::Alembic => self.execute_alembic(integration, operation),
+            IntegrationType::Postgres => self.execute_postgres(integration, operation),
+        }
+    }
+
+    /// Execute a database operation, bypassing the destructive-operation gate.
+    ///
+    /// The caller must have obtained explicit user confirmation already
+    /// (the GUI confirms destructive operations before invoking with
+    /// `confirmed=true`). Non-destructive operations behave exactly like
+    /// [`DatabaseManager::execute`].
+    pub fn execute_confirmed(
+        &self,
+        integration: &DatabaseIntegration,
+        operation: DatabaseOperation,
+    ) -> DatabaseOutcome {
         match integration.integration_type {
             IntegrationType::Prisma => self.execute_prisma(integration, operation),
             IntegrationType::Django => self.execute_django(integration, operation),
@@ -388,7 +416,11 @@ impl DatabaseManager {
         self.run_command(integration, &command, operation)
     }
 
-    /// Run a command through the process manager
+    /// Run a command through the process manager and wait for it to finish.
+    ///
+    /// The process state is polled until it exits (or the timeout elapses)
+    /// instead of sleeping a fixed amount of time, and the trailing log
+    /// output is captured so the caller sees what actually happened.
     fn run_command(
         &self,
         integration: &DatabaseIntegration,
@@ -402,51 +434,112 @@ impl DatabaseManager {
         );
 
         let outcome = self.process_manager.start(&request);
-        
+
         match outcome {
             ProcessOutcome::Started(_snapshot) => {
-                std::thread::sleep(Duration::from_secs(2));
-                
-                let status_outcome = self.process_manager.status(&request.label);
-                match status_outcome {
-                    ProcessOutcome::Snapshot(s) => {
-                        if s.state == ProcessState::Exited {
-                            if s.exit_code == Some(0) {
-                                DatabaseOutcome::Success { 
-                                    output: format!("{} completed successfully", operation.as_str()) 
+                let deadline = Instant::now() + OPERATION_TIMEOUT;
+                loop {
+                    match self.process_manager.status(&request.label) {
+                        ProcessOutcome::Snapshot(s) => {
+                            if s.state == ProcessState::Exited {
+                                let logs = self.tail_logs(&request.label);
+                                if s.exit_code == Some(0) {
+                                    return DatabaseOutcome::Success {
+                                        output: if logs.is_empty() {
+                                            format!("{} completed successfully", operation.as_str())
+                                        } else {
+                                            logs
+                                        },
+                                    };
                                 }
-                            } else {
-                                DatabaseOutcome::Error { 
-                                    message: format!("{} failed with exit code {:?}", operation.as_str(), s.exit_code),
-                                    output: None,
-                                }
-                            }
-                        } else {
-                            DatabaseOutcome::Success { 
-                                output: format!("{} started", operation.as_str()) 
+                                return DatabaseOutcome::Error {
+                                    message: format!(
+                                        "{} failed with exit code {:?}",
+                                        operation.as_str(),
+                                        s.exit_code
+                                    ),
+                                    output: Some(logs),
+                                };
                             }
                         }
+                        ProcessOutcome::NotFound(label) => {
+                            return DatabaseOutcome::Error {
+                                message: format!(
+                                    "lost track of the {} process ({label})",
+                                    operation.as_str()
+                                ),
+                                output: Some(self.tail_logs(&request.label)),
+                            };
+                        }
+                        ProcessOutcome::Error(e) => {
+                            return DatabaseOutcome::Error {
+                                message: e,
+                                output: Some(self.tail_logs(&request.label)),
+                            };
+                        }
+                        _ => {}
                     }
-                    _ => DatabaseOutcome::Success { 
-                        output: format!("{} initiated", operation.as_str()) 
-                    },
+
+                    if Instant::now() >= deadline {
+                        let _ = self.process_manager.stop(&request.label);
+                        return DatabaseOutcome::Error {
+                            message: format!(
+                                "{} timed out after {}s and was stopped",
+                                operation.as_str(),
+                                OPERATION_TIMEOUT.as_secs()
+                            ),
+                            output: Some(self.tail_logs(&request.label)),
+                        };
+                    }
+
+                    std::thread::sleep(POLL_INTERVAL);
                 }
             }
-            ProcessOutcome::Error(e) => DatabaseOutcome::Error { 
-                message: e, 
-                output: None 
+            ProcessOutcome::Error(e) => DatabaseOutcome::Error {
+                message: e,
+                output: None,
             },
-            _ => DatabaseOutcome::Error {
-                message: "Failed to start database operation".to_string(),
+            other => DatabaseOutcome::Error {
+                message: format!(
+                    "could not start {} (unexpected process outcome: {})",
+                    operation.as_str(),
+                    outcome_name(&other),
+                ),
                 output: None,
             },
         }
+    }
+
+    /// Last lines of captured stdout/stderr for a database operation.
+    fn tail_logs(&self, label: &str) -> String {
+        self.process_manager
+            .log_buffer(label)
+            .map(|buffer| {
+                buffer
+                    .snapshot(Some(LOG_TAIL_LINES))
+                    .iter()
+                    .map(|entry| entry.message.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default()
     }
 }
 
 impl Default for DatabaseManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Short name of a process outcome for error messages.
+fn outcome_name(outcome: &ProcessOutcome) -> &'static str {
+    match outcome {
+        ProcessOutcome::Started(_) => "started",
+        ProcessOutcome::Snapshot(_) => "snapshot",
+        ProcessOutcome::Stopped(_) => "stopped",
+        ProcessOutcome::NotFound(_) => "not-found",
+        ProcessOutcome::Error(_) => "error",
     }
 }
 
