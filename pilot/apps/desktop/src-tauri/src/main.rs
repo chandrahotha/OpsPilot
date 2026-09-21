@@ -379,6 +379,28 @@ fn stop_external_service(path: Option<String>, service: String) -> Result<String
         };
     }
 
+    // Re-identify the holder immediately before the kill: PIDs get recycled,
+    // and a stale reading must never make Pilot terminate the wrong process.
+    let fresh = pilot_port_manager::inspect_port(port);
+    if fresh.available {
+        return Ok(format!("port {port} became free on its own; nothing to stop"));
+    }
+    if fresh.pid != Some(pid) {
+        let holder = fresh
+            .process
+            .as_deref()
+            .map(|name| {
+                format!(
+                    "{name} (pid {})",
+                    fresh.pid.map(|p| p.to_string()).unwrap_or_else(|| "?".to_string())
+                )
+            })
+            .unwrap_or_else(|| "an unidentified process".to_string());
+        return Err(format!(
+            "port {port} changed hands (now held by {holder}); re-check the card and try again"
+        ));
+    }
+
     kill_pid(pid)?;
 
     // Give the OS a moment, then verify the engine really stopped.
