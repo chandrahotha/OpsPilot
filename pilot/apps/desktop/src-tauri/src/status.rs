@@ -114,7 +114,7 @@ pub fn build_status(model: &ProjectModel) -> Vec<ServiceStatus> {
         services.push(ServiceStatus::unknown(
             "docker",
             "Docker",
-            "container state is managed from the Docker panel",
+            "Docker detected; container state is not observable via ports",
         ));
     }
 
@@ -308,7 +308,7 @@ mod tests {
 
         assert_eq!(docker.state, ServiceState::Unknown);
         assert!(docker.port.is_none());
-        assert!(docker.detail.contains("Docker panel"));
+        assert!(docker.detail.contains("not observable"));
     }
 
     #[test]

@@ -114,30 +114,57 @@ pub fn compose_available() -> bool {
         .unwrap_or(false)
 }
 
-/// Parse docker ps -a --format json output
+/// Compose identity labels present on every compose-managed container,
+/// regardless of daemon version.
+const COMPOSE_PROJECT_LABEL: &str = "com.docker.compose.project";
+const COMPOSE_SERVICE_LABEL: &str = "com.docker.compose.service";
+
+/// Read a compose identity value: prefer the template field when the daemon
+/// provides it, fall back to the container labels (always present).
+fn compose_value(json: &serde_json::Value, field: &str, label: &str) -> Option<String> {
+    json[field]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+        .or_else(|| {
+            json["Labels"].as_str().and_then(|labels| {
+                labels.split(',').find_map(|pair| {
+                    let (key, value) = pair.split_once('=')?;
+                    (key.trim() == label && !value.trim().is_empty())
+                        .then(|| value.trim().to_string())
+                })
+            })
+        })
+}
+
+/// Parse `docker ps -a --format "{{json .}}"` output (one object per line).
+///
+/// The full context object is used instead of cherry-picked template fields
+/// because fields like `.ComposeProject` do not exist on every daemon
+/// version and make the whole template fail. Compose identity comes from
+/// labels, which all versions provide.
 fn parse_containers_json(output: &str) -> Vec<ContainerStatus> {
     output
         .lines()
         .filter_map(|line| {
             let json: serde_json::Value = serde_json::from_str(line).ok()?;
+            let name = json["Names"].as_str().unwrap_or("").trim_start_matches('/');
+            if name.is_empty() && json["ID"].as_str().unwrap_or("").is_empty() {
+                return None;
+            }
             Some(ContainerStatus {
-                name: json["Names"].as_str().unwrap_or("").to_string(),
+                name: name.to_string(),
                 id: json["ID"].as_str().unwrap_or("").to_string(),
                 image: json["Image"].as_str().unwrap_or("").to_string(),
                 running: json["State"].as_str() == Some("running"),
                 status: json["Status"].as_str().unwrap_or("").to_string(),
                 ports: json["Ports"]
                     .as_str()
-                    .map(|p| p.split(", ").map(|s| s.to_string()).collect())
+                    .filter(|ports| !ports.is_empty())
+                    .map(|ports| ports.split(", ").map(|s| s.to_string()).collect())
                     .unwrap_or_default(),
-                compose_project: json["ComposeProject"]
-                    .as_str()
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string()),
-                compose_service: json["ComposeService"]
-                    .as_str()
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string()),
+                compose_project: compose_value(&json, "ComposeProject", COMPOSE_PROJECT_LABEL),
+                compose_service: compose_value(&json, "ComposeService", COMPOSE_SERVICE_LABEL),
             })
         })
         .collect()
@@ -150,12 +177,7 @@ pub fn list_containers() -> DockerOutcome {
     }
 
     let output = docker_command()
-        .args([
-            "ps",
-            "-a",
-            "--format",
-            r#"{\"Names\":\"{{.Names}}\",\"ID\":\"{{.ID}}\",\"Image\":\"{{.Image}}\",\"State\":\"{{.State}}\",\"Status\":\"{{.Status}}\",\"Ports\":\"{{.Ports}}\",\"ComposeProject\":\"{{.ComposeProject}}\",\"ComposeService\":\"{{.ComposeService}}\"}"#,
-        ])
+        .args(["ps", "-a", "--format", "{{json .}}"])
         .output();
 
     match output {
@@ -399,6 +421,35 @@ mod tests {
         // Use truly malformed JSON to test error handling
         let containers = parse_containers_json("not json\n{invalid");
         assert!(containers.is_empty());
+    }
+
+    #[test]
+    fn parse_full_context_json_reads_compose_identity_from_labels() {
+        // Shape of `docker ps --format "{{json .}}"` on daemons whose
+        // template context has no ComposeProject/ComposeService fields.
+        let line = r#"{"Command":"\"postgres\"","CreatedAt":"2026-09-21","ID":"abc123","Image":"postgres:16","Labels":"com.docker.compose.project=vertex,com.docker.compose.service=db","LocalVolumes":"1","Mounts":"","Names":"/vertex-db-1","Networks":"vertex_default","Ports":"5432/tcp","RunningFor":"2 hours ago","Size":"0B","State":"running","Status":"Up 2 hours"}"#;
+
+        let containers = parse_containers_json(line);
+
+        assert_eq!(containers.len(), 1);
+        assert_eq!(containers[0].name, "vertex-db-1");
+        assert_eq!(containers[0].id, "abc123");
+        assert!(containers[0].running);
+        assert_eq!(containers[0].compose_project.as_deref(), Some("vertex"));
+        assert_eq!(containers[0].compose_service.as_deref(), Some("db"));
+    }
+
+    #[test]
+    fn parse_context_json_without_labels_has_no_compose_identity() {
+        let line = r#"{"ID":"def456","Image":"redis:7","Names":"redis","Ports":"","State":"exited","Status":"Exited (0)"}"#;
+
+        let containers = parse_containers_json(line);
+
+        assert_eq!(containers.len(), 1);
+        assert_eq!(containers[0].name, "redis");
+        assert!(!containers[0].running);
+        assert!(containers[0].ports.is_empty());
+        assert!(containers[0].compose_project.is_none());
     }
 
     #[test]

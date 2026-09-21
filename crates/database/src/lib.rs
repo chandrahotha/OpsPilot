@@ -453,11 +453,17 @@ impl DatabaseManager {
                                     };
                                 }
                                 return DatabaseOutcome::Error {
-                                    message: format!(
-                                        "{} failed with exit code {:?}",
-                                        operation.as_str(),
-                                        s.exit_code
-                                    ),
+                                    message: {
+                                        let base = format!(
+                                            "{} failed with exit code {}",
+                                            operation.as_str(),
+                                            fmt_exit(s.exit_code)
+                                        );
+                                        match missing_tool_hint(command, &logs) {
+                                            Some(hint) => format!("{base}. {hint}"),
+                                            None => base,
+                                        }
+                                    },
                                     output: Some(logs),
                                 };
                             }
@@ -530,6 +536,31 @@ impl Default for DatabaseManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Human-readable exit code for messages: `1`, never `Some(1)`.
+fn fmt_exit(code: Option<i32>) -> String {
+    code.map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Actionable hint when the command's own tool is not installed.
+///
+/// Detected from the captured output (not the exit code alone, which could
+/// mean anything the tool itself reported). Returns `None` when the tool ran
+/// and failed on its own terms.
+fn missing_tool_hint(command: &str, logs: &str) -> Option<String> {
+    let lowered = logs.to_lowercase();
+    let missing = lowered.contains("not recognized as an internal or external command")
+        || lowered.contains("command not found");
+    if !missing {
+        return None;
+    }
+
+    let tool = command.split_whitespace().next().unwrap_or("the required tool");
+    Some(format!(
+        "`{tool}` is not installed or not on PATH; install the client, or run the database with `docker compose up`"
+    ))
 }
 
 /// Short name of a process outcome for error messages.
@@ -608,5 +639,40 @@ mod tests {
     #[test]
     fn alembic_migrate_command() {
         let _ = "alembic upgrade head".to_string();
+    }
+
+    #[test]
+    fn exit_codes_format_without_rust_debug_syntax() {
+        assert_eq!(fmt_exit(Some(1)), "1");
+        assert_eq!(fmt_exit(Some(0)), "0");
+        assert_eq!(fmt_exit(None), "unknown");
+    }
+
+    #[test]
+    fn missing_windows_tool_is_detected_with_guidance() {
+        let logs = "'psql' is not recognized as an internal or external command,\noperable program or batch file.";
+
+        let hint = missing_tool_hint("psql -h localhost -c \"SELECT 1\"", logs)
+            .expect("must detect the missing tool");
+
+        assert!(hint.contains("`psql` is not installed"));
+        assert!(hint.contains("docker compose up"));
+    }
+
+    #[test]
+    fn missing_unix_tool_is_detected_with_guidance() {
+        let hint = missing_tool_hint("pg_dump -h localhost", "pg_dump: command not found")
+            .expect("must detect the missing tool");
+
+        assert!(hint.contains("`pg_dump` is not installed"));
+    }
+
+    #[test]
+    fn tool_failures_are_not_mistaken_for_missing_tools() {
+        assert_eq!(
+            missing_tool_hint("psql -h localhost", "psql: FATAL: database \"x\" does not exist"),
+            None
+        );
+        assert_eq!(missing_tool_hint("prisma migrate deploy", ""), None);
     }
 }

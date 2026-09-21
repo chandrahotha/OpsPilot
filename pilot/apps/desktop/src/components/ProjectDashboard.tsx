@@ -5,6 +5,7 @@
  * projects produce two different dashboards (phase 3).
  */
 
+import { useState } from 'react';
 import type { DiagnosticsReport, ProjectModel, ServiceStatus, StartupPlan } from 'ops-pilot-shared';
 import type { ActivityEvent } from '../App';
 import { Capabilities } from './Capabilities';
@@ -12,6 +13,7 @@ import { DatabasePanel } from './DatabasePanel';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
 import { DockerPanel } from './DockerPanel';
 import { LogsPanel } from './LogsPanel';
+import type { LogFocus } from './LogsPanel';
 import { ScriptsPanel } from './ScriptsPanel';
 import { ServiceGrid } from './ServiceGrid';
 import { StartupPlanPanel } from './StartupPlanPanel';
@@ -67,6 +69,7 @@ export function ProjectDashboard({
   const showDocker = model.docker !== undefined;
   const showDatabase = model.orm !== undefined || model.database !== undefined;
   const hasStartable = (plan?.steps.length ?? 0) > 0;
+  const [logFocus, setLogFocus] = useState<LogFocus | null>(null);
 
   return (
     <div className="dashboard">
@@ -127,9 +130,15 @@ export function ProjectDashboard({
           {message && <pre className="banner banner-pre">{message}</pre>}
         </section>
 
-        {showDocker && (
-          <DockerPanel projectPath={projectPath} hasCompose={model.docker?.compose ?? false} onEvent={onEvent} />
-        )}
+      {showDocker && (
+        <DockerPanel
+          projectPath={projectPath}
+          projectName={model.project.name}
+          hasCompose={model.docker?.compose ?? false}
+          onEvent={onEvent}
+          onViewLogs={(name) => setLogFocus({ key: `docker:${name}`, ts: Date.now() })}
+        />
+      )}
 
         {showDatabase && (
           <DatabasePanel
@@ -150,7 +159,7 @@ export function ProjectDashboard({
       </div>
 
       <aside className="dashboard-side">
-        <LogsPanel events={events} />
+        <LogsPanel events={events} projectName={model.project.name} focus={logFocus} />
       </aside>
     </div>
   );

@@ -356,7 +356,11 @@ function App() {
             </div>
             <div className='scan-logs-content'>
               {scanLogs.length === 0 ? (
-                <p className='no-logs'>No scan logs yet. Click Select Project to scan a directory.</p>
+                <p className='no-logs'>
+                  {scan !== null
+                    ? 'Scan logs were cleared. Rescan to repopulate them.'
+                    : 'No scan logs yet. Click Select Project to scan a directory.'}
+                </p>
               ) : (
                 scanLogs.map((log, i) => (
                   <div key={i} className={'scan-log-entry ' + log.type}>

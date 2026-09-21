@@ -674,6 +674,27 @@ button:disabled {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--text-primary);
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-hover) transparent;
+}
+
+.logs-content::-webkit-scrollbar,
+.activity-feed::-webkit-scrollbar,
+.dashboard-side::-webkit-scrollbar {
+  width: 10px;
+}
+
+.logs-content::-webkit-scrollbar-thumb,
+.activity-feed::-webkit-scrollbar-thumb,
+.dashboard-side::-webkit-scrollbar-thumb {
+  background: var(--surface-hover);
+  border-radius: 0.5rem;
+}
+
+.logs-content::-webkit-scrollbar-track,
+.activity-feed::-webkit-scrollbar-track,
+.dashboard-side::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .logs-select-row {
@@ -695,13 +716,14 @@ button:disabled {
 /* ---- Destructive database actions ---- */
 
 .btn-danger {
+  background: var(--danger) !important;
   border-color: var(--danger) !important;
-  color: #fecaca !important;
+  color: white !important;
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: var(--danger) !important;
-  border-color: var(--danger) !important;
+  background: #dc2626 !important;
+  border-color: #dc2626 !important;
   color: white !important;
 }
 
@@ -894,13 +916,41 @@ button:disabled {
 .dashboard-side {
   position: sticky;
   top: 0;
-  max-height: calc(100vh - 3rem);
+  height: calc(100vh - 3rem);
   overflow-y: auto;
   min-width: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-hover) transparent;
 }
 
 .dashboard-side .logs-panel {
   margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.dashboard-side .logs-content {
+  flex: 1 1 auto;
+  min-height: 420px;
+  max-height: none;
+}
+
+.dashboard-side .activity-feed {
+  max-height: 40vh;
+}
+
+.foreign-containers {
+  margin-top: 1rem;
+  border: 1px dashed var(--warning);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+}
+
+.foreign-containers > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--warning);
 }
 
 @media (max-width: 1000px) {
