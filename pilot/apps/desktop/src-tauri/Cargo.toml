@@ -21,3 +21,5 @@ pilot-diagnostics = { path = "../../../../crates/diagnostics" }
 pilot-process-manager = { path = "../../../../crates/process-manager" }
 pilot-docker = { path = "../../../../crates/docker" }
 pilot-database = { path = "../../../../crates/database" }
+dunce = "1.0"
+tokio = { version = "1.39", features = ["sync"] }

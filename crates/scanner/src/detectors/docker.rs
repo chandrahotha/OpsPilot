@@ -3,8 +3,11 @@
 use crate::{Detector, exists, read_text};
 use pilot_core::{DatabaseInfo, ProjectModel};
 
-/// Compose files recognized by Pilot. A single `compose.yml` is a Docker Compose v2 file.
+/// Compose files recognized by Pilot, in precedence order (highest first).
+/// Override files are read first so they can override base configuration.
 const COMPOSE_FILES: &[&str] = &[
+    "docker-compose.override.yml",
+    "docker-compose.override.yaml",
     "docker-compose.yml",
     "docker-compose.yaml",
     "compose.yml",
@@ -51,25 +54,36 @@ impl Detector for DockerComposeDetector {
     }
 
     fn apply(&self, project_path: &str, model: &mut ProjectModel) -> Vec<String> {
-        let Some(file) = COMPOSE_FILES.iter().find(|file| exists(project_path, file)) else {
-            return Vec::new();
-        };
+        let compose_files: Vec<_> = COMPOSE_FILES
+            .iter()
+            .filter(|file| exists(project_path, file))
+            .collect();
 
-        let mut evidence = vec![format!("{file} (docker compose)")];
+        if compose_files.is_empty() {
+            return Vec::new();
+        }
+
+        let mut evidence = Vec::new();
         let docker = model.docker.get_or_insert_default();
         docker.detected = true;
         docker.compose = true;
 
-        if model.database.is_none()
-            && let Some(compose) = read_text(project_path, file)
-        {
-            let lowered = compose.to_lowercase();
-            if let Some((image, database, port)) = DATABASE_IMAGES
-                .iter()
-                .find(|(image, ..)| lowered.contains(image))
-            {
-                evidence.push(format!("compose service image {image} on port {port}"));
-                model.database = Some(DatabaseInfo::new(*database, *port));
+        // Read all compose files and collect database images
+        // Override files are processed first (higher precedence)
+        for file in compose_files {
+            evidence.push(format!("{file} (docker compose)"));
+
+            if model.database.is_none() {
+                if let Some(compose) = read_text(project_path, file) {
+                    let lowered = compose.to_lowercase();
+                    if let Some((image, database, port)) = DATABASE_IMAGES
+                        .iter()
+                        .find(|(image, ..)| lowered.contains(image))
+                    {
+                        evidence.push(format!("compose service image {image} on port {port}"));
+                        model.database = Some(DatabaseInfo::new(*database, *port));
+                    }
+                }
             }
         }
 

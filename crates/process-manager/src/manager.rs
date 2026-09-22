@@ -50,6 +50,12 @@ pub trait ProcessManager: Send + Sync {
 
     /// The operation history, newest first
     fn history(&self) -> Vec<HistoryEntry>;
+
+    /// Check whether a service or its descendant processes includes the given PID
+    fn contains_pid(&self, label: &str, pid: u32) -> bool;
+
+    /// Find which tracked running service (if any) owns or spawned the given PID
+    fn any_contains_pid(&self, pid: u32) -> Option<ProcessSnapshot>;
 }
 
 /// Process manager for the machine Pilot is running on
@@ -61,6 +67,15 @@ pub struct LocalProcessManager {
 impl Default for LocalProcessManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Clone for LocalProcessManager {
+    fn clone(&self) -> Self {
+        LocalProcessManager {
+            records: Mutex::new(HashMap::new()),
+            history: OperationHistory::default(),
+        }
     }
 }
 
@@ -77,8 +92,6 @@ impl LocalProcessManager {
     fn stop_process(&self, record: &Arc<ProcessRecord>) -> ProcessOutcome {
         let label = record.request.label.clone();
 
-        self.refresh(record);
-
         if !record.is_running() {
             let detail = "was not running anymore".to_string();
             record.set_state(ProcessState::Exited);
@@ -92,14 +105,15 @@ impl LocalProcessManager {
             .logs
             .push_system(&label, format!("stopping (pid {})", record.pid));
 
+        #[cfg(windows)]
+        record.terminate_job();
+
         // Ask the platform to take the whole tree; on Windows this is forceful.
         let _ = stop_tree_command(record.pid).output();
 
         let deadline = Instant::now() + STOP_TIMEOUT;
 
         while Instant::now() < deadline {
-            self.refresh(record);
-
             if !record.is_running() {
                 break;
             }
@@ -119,18 +133,27 @@ impl LocalProcessManager {
         let state = if record.state() == ProcessState::Exited {
             ProcessState::Exited
         } else {
+            record.set_state(ProcessState::Stopped);
             ProcessState::Stopped
         };
 
-        record.set_state(state);
-
-        let detail = match record.exit_code() {
-            Some(code) => format!("stopped by Pilot (exit code {code})"),
-            None => "stopped by Pilot".to_string(),
+        let platform = current_platform();
+        let detail = match state {
+            ProcessState::Exited => record
+                .lock()
+                .exit_code()
+                .map(|code| format!("exited with code {code}"))
+                .unwrap_or_else(|| "exited".to_string()),
+            _ => format!("stopped on {platform}"),
         };
 
         record.logs.push_system(&label, detail.clone());
         self.history.record("stop", label.clone());
+
+        // Join the watcher thread to prevent thread leak
+        if let Some(handle) = record.take_watcher_handle() {
+            let _ = handle.join();
+        }
 
         let snapshot = record.snapshot();
         ProcessOutcome::Stopped(ProcessSnapshot { detail, ..snapshot })
@@ -140,6 +163,12 @@ impl LocalProcessManager {
         self.records
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Remove stopped/exited/failed records to prevent memory leaks
+    fn cleanup_records(&self) {
+        let mut records = self.lock_records();
+        records.retain(|_, record| record.is_running());
     }
 
     fn start_process(&self, request: &ProcessRequest) -> Result<Arc<ProcessRecord>, String> {
@@ -182,12 +211,27 @@ impl LocalProcessManager {
                 let pid = child.id();
                 logs.push_system(&request.label, format!("started with pid {pid}"));
 
+                #[cfg(windows)]
+                let job = {
+                    use std::os::windows::io::AsRawHandle;
+                    let job_opt = crate::platform::JobObjectGuard::new();
+                    if let Some(ref job) = job_opt {
+                        job.assign_process(child.as_raw_handle() as *mut std::ffi::c_void);
+                    }
+                    job_opt
+                };
+
                 let record = Arc::new(ProcessRecord::new(
                     request.clone(),
                     pid,
                     Arc::clone(&logs),
                     child,
                 ));
+
+                #[cfg(windows)]
+                if let Some(job) = job {
+                    record.set_job(job);
+                }
 
                 records.insert(request.label.clone(), Arc::clone(&record));
                 record
@@ -222,7 +266,7 @@ impl LocalProcessManager {
         let watcher = Arc::clone(record);
         let platform = current_platform();
 
-        thread::spawn(move || {
+        let handle = thread::spawn(move || {
             loop {
                 thread::sleep(POLL_INTERVAL);
 
@@ -254,13 +298,14 @@ impl LocalProcessManager {
                 break;
             }
         });
+
+        // Store the watcher handle so we can join it on drop
+        record.set_watcher_handle(handle);
     }
 
     /// Force-terminate a tracked process without a graceful wait.
     fn kill_process(&self, record: &Arc<ProcessRecord>) -> ProcessOutcome {
         let label = record.request.label.clone();
-
-        self.refresh(record);
 
         if !record.is_running() {
             let detail = "was not running anymore".to_string();
@@ -275,6 +320,9 @@ impl LocalProcessManager {
             .logs
             .push_system(&label, format!("force terminating (pid {})", record.pid));
 
+        #[cfg(windows)]
+        record.terminate_job();
+
         // No waiting: signal the tree, then kill the direct child at once.
         let _ = kill_tree_command(record.pid).output();
 
@@ -287,29 +335,21 @@ impl LocalProcessManager {
         record.set_state(ProcessState::Stopped);
         self.history.record("kill", label.clone());
 
+        // Join the watcher thread to prevent thread leak
+        if let Some(handle) = record.take_watcher_handle() {
+            let _ = handle.join();
+        }
+
         let snapshot = record.snapshot();
         let detail = "force terminated by Pilot".to_string();
         ProcessOutcome::Stopped(ProcessSnapshot { detail, ..snapshot })
     }
 
     /// Update a record from the operating system, without overriding a stop
-    fn refresh(&self, record: &Arc<ProcessRecord>) {
-        let exit = {
-            let mut fields = record.lock();
-
-            match fields.child().as_mut() {
-                Some(child) => child.try_wait().ok().flatten(),
-                None => None,
-            }
-        };
-
-        if let Some(status) = exit {
-            record.set_exit_code(status.code());
-
-            if record.state() == ProcessState::Running {
-                record.set_state(ProcessState::Exited);
-            }
-        }
+    /// Only reads state; the watcher thread owns try_wait()
+    fn refresh(&self, _record: &Arc<ProcessRecord>) {
+        // Just read the current state; the watcher thread handles process exit detection
+        // This avoids the race condition where both refresh() and the watcher call try_wait()
     }
 }
 
@@ -381,6 +421,7 @@ impl ProcessManager for LocalProcessManager {
     }
 
     fn list(&self) -> Vec<ProcessSnapshot> {
+        self.cleanup_records();
         let records = self.lock_records();
         let mut snapshots: Vec<ProcessSnapshot> =
             records.values().map(|record| record.snapshot()).collect();
@@ -397,6 +438,34 @@ impl ProcessManager for LocalProcessManager {
 
     fn history(&self) -> Vec<HistoryEntry> {
         self.history.snapshot(None)
+    }
+
+    fn contains_pid(&self, label: &str, pid: u32) -> bool {
+        let records = self.lock_records();
+        if let Some(record) = records.get(label) {
+            if record.is_running() {
+                if record.pid == pid {
+                    return true;
+                }
+                let descendants = crate::platform::get_descendant_pids(record.pid);
+                return descendants.contains(&pid);
+            }
+        }
+        false
+    }
+
+    fn any_contains_pid(&self, pid: u32) -> Option<ProcessSnapshot> {
+        let records = self.lock_records();
+        for record in records.values() {
+            if record.is_running() {
+                if record.pid == pid
+                    || crate::platform::get_descendant_pids(record.pid).contains(&pid)
+                {
+                    return Some(record.snapshot());
+                }
+            }
+        }
+        None
     }
 }
 
@@ -490,5 +559,23 @@ mod tests {
             }
             other => panic!("expected Stopped, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn contains_pid_recognizes_running_process() {
+        let manager = LocalProcessManager::new();
+        let request = sleeper_request("contains-test");
+        let outcome = manager.start(&request);
+        let pid = match outcome {
+            ProcessOutcome::Started(snapshot) => snapshot.pid.expect("must have pid"),
+            other => panic!("expected Started, got {other:?}"),
+        };
+
+        assert!(manager.contains_pid("contains-test", pid));
+        assert!(!manager.contains_pid("contains-test", 999_999));
+        assert!(manager.any_contains_pid(pid).is_some());
+        assert!(manager.any_contains_pid(999_999).is_none());
+
+        manager.kill("contains-test");
     }
 }

@@ -195,10 +195,7 @@ fn overlay_tracked_state(services: &mut [ServiceStatus], project_path: &str) {
             continue;
         };
 
-        if !snapshot
-            .working_directory
-            .eq_ignore_ascii_case(project_path)
-        {
+        if !crate::path_belongs_to_project(&snapshot.working_directory, project_path) {
             continue;
         }
 
@@ -210,8 +207,12 @@ fn overlay_tracked_state(services: &mut [ServiceStatus], project_path: &str) {
                     // The port is up and it is Pilot's own process: the
                     // normal, healthy state after Start.
                     Some(port) if service.state == ServiceState::Running => {
+                        let actual_pid = service
+                            .owner_pid
+                            .map(|p| p.to_string())
+                            .unwrap_or_else(|| pid.clone());
                         service.detail = format!(
-                            "started by Pilot ({pid}); port {port} is accepting connections"
+                            "started by Pilot ({actual_pid}); port {port} is accepting connections"
                         );
                     }
                     // Tracked process is alive but the port is not accepting
@@ -239,6 +240,29 @@ fn overlay_tracked_state(services: &mut [ServiceStatus], project_path: &str) {
                 }
             }
             ProcessState::Stopped => {}
+        }
+    }
+
+    // Also check if any port-observed service is owned by Pilot through child processes
+    for service in services.iter_mut() {
+        if let Some(port_pid) = service.owner_pid {
+            if manager.contains_pid(&service.key, port_pid) {
+                service.pilot_started = true;
+                if let Some(port) = service.port {
+                    service.detail = format!(
+                        "started by Pilot ({port_pid}); port {port} is accepting connections"
+                    );
+                }
+            } else if let Some(owner_snapshot) = manager.any_contains_pid(port_pid) {
+                if crate::path_belongs_to_project(&owner_snapshot.working_directory, project_path) {
+                    service.pilot_started = true;
+                    if let Some(port) = service.port {
+                        service.detail = format!(
+                            "started by Pilot ({port_pid}); port {port} is accepting connections"
+                        );
+                    }
+                }
+            }
         }
     }
 }

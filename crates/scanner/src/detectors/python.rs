@@ -70,7 +70,7 @@ impl Detector for PythonDetector {
         let manifests = MANIFESTS
             .iter()
             .filter_map(|file| read_text(project_path, file))
-            .map(|content| content.to_lowercase())
+            .map(|content| strip_comments(&content).to_lowercase())
             .collect::<Vec<_>>();
 
         if manifests.is_empty() {
@@ -106,6 +106,27 @@ fn resolve<'a>(
     candidates
         .iter()
         .find(|(needle, ..)| manifests.iter().any(|content| content.contains(needle)))
+}
+
+/// Strip Python-style comments (lines starting with #) from manifest content
+fn strip_comments(content: &str) -> String {
+    content
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with('#') {
+                None
+            } else {
+                // Remove inline comments
+                if let Some(idx) = line.find(" #") {
+                    Some(line[..idx].to_string())
+                } else {
+                    Some(line.to_string())
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]

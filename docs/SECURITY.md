@@ -22,7 +22,11 @@ declares and reports what happened.
 
 ## What Pilot never does
 
-- Never reads `.env` contents (presence only).
+- Never reads `.env` secrets. The single exception is the `PORT=` key, which
+  the scanner reads from `.env`/`.env.example` (and a monorepo service's
+  parent directory) to learn the backend's configured port. Every other key
+  and every value besides the port number is never inspected, logged, or
+  displayed.
 - Never sends project data anywhere; there is no network code besides
   localhost port probes and opening the local frontend URL in your browser.
 - The `open_frontend` path only opens `http://localhost:<detected port>`

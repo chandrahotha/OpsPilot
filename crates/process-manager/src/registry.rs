@@ -65,6 +65,9 @@ pub struct RecordInner {
     state: ProcessState,
     exit_code: Option<i32>,
     child: Option<Child>,
+    watcher_handle: Option<std::thread::JoinHandle<()>>,
+    #[cfg(windows)]
+    job: Option<crate::platform::JobObjectGuard>,
 }
 
 /// Locked view of a record's mutable fields, held for one short critical section
@@ -97,6 +100,11 @@ impl<'a> RecordLock<'a> {
     pub fn child(&mut self) -> &mut Option<Child> {
         &mut self.inner.child
     }
+
+    /// The watcher thread handle, if running
+    pub fn watcher_handle(&mut self) -> &mut Option<std::thread::JoinHandle<()>> {
+        &mut self.inner.watcher_handle
+    }
 }
 
 impl ProcessRecord {
@@ -111,7 +119,26 @@ impl ProcessRecord {
                 state: ProcessState::Running,
                 exit_code: None,
                 child: Some(child),
+                watcher_handle: None,
+                #[cfg(windows)]
+                job: None,
             }),
+        }
+    }
+
+    /// Assign a Windows Job Object to this record
+    #[cfg(windows)]
+    pub fn set_job(&self, job: crate::platform::JobObjectGuard) {
+        let mut inner = self.lock();
+        inner.inner.job = Some(job);
+    }
+
+    /// Terminate the Windows Job Object if present
+    #[cfg(windows)]
+    pub fn terminate_job(&self) {
+        let inner = self.lock();
+        if let Some(ref job) = inner.inner.job {
+            job.terminate();
         }
     }
 
@@ -126,6 +153,9 @@ impl ProcessRecord {
                 state: ProcessState::Failed,
                 exit_code: None,
                 child: None,
+                watcher_handle: None,
+                #[cfg(windows)]
+                job: None,
             }),
         }
     }
@@ -214,6 +244,27 @@ impl ProcessRecord {
     /// Mutably lock the child handle, for the manager's stop and watcher threads
     pub fn lock_child(&self) -> RecordLock<'_> {
         self.lock()
+    }
+
+    /// Set the watcher thread handle
+    pub fn set_watcher_handle(&self, handle: std::thread::JoinHandle<()>) {
+        let mut fields = self.lock();
+        fields.watcher_handle().replace(handle);
+    }
+
+    /// Take the watcher thread handle, leaving nothing behind
+    pub fn take_watcher_handle(&self) -> Option<std::thread::JoinHandle<()>> {
+        let mut fields = self.lock();
+        fields.watcher_handle().take()
+    }
+}
+
+impl Drop for ProcessRecord {
+    fn drop(&mut self) {
+        // Ensure the watcher thread is joined to prevent thread leaks
+        if let Some(handle) = self.take_watcher_handle() {
+            let _ = handle.join();
+        }
     }
 }
 

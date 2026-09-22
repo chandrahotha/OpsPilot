@@ -39,6 +39,11 @@ function formatTime(date: Date): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+/** Strip ANSI escape codes from terminal output */
+function stripAnsi(str: string): string {
+  return str.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
 function procKey(label: string): string {
   return `proc:${label}`;
 }
@@ -302,7 +307,7 @@ export function LogsPanel({ events, projectName, focus }: LogsPanelProps) {
             {paused ? '— paused —\n' : ''}
             {visible.length === 0
               ? '(no output captured yet)'
-              : visible.map((entry) => `[${entry.stream}] ${entry.message}`).join('\n')}
+              : visible.map((entry) => `[${entry.stream}] ${stripAnsi(entry.message)}`).join('\n')}
           </pre>
         </>
       )}

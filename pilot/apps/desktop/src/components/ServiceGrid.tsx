@@ -13,13 +13,10 @@ interface ServiceGridProps {
   startableKeys: string[];
   /** Services with an action currently in flight (service key -> action label) */
   busyServices: Record<string, string>;
-  /** Frontend URL when the frontend is actually running, otherwise null */
-  frontendUrl: string | null;
   onStart: (service: string) => void;
   onStop: (service: string) => void;
   onStopExternal: (service: string) => void;
   onRestart: (service: string) => void;
-  onOpenFrontend: () => void;
   onServiceLogs: (service: string) => void;
 }
 
@@ -53,12 +50,10 @@ export function ServiceGrid({
   services,
   startableKeys,
   busyServices,
-  frontendUrl,
   onStart,
   onStop,
   onStopExternal,
   onRestart,
-  onOpenFrontend,
   onServiceLogs,
 }: ServiceGridProps) {
   if (services.length === 0) {
@@ -138,16 +133,7 @@ export function ServiceGrid({
                 >
                   {busy === 'Restarting…' ? 'Restarting…' : 'Restart'}
                 </button>
-                {service.key === 'frontend' && frontendUrl !== null && (
-                  <button
-                    type="button"
-                    className="btn-open"
-                    onClick={onOpenFrontend}
-                    title={`Open ${frontendUrl} in the default browser`}
-                  >
-                    Open
-                  </button>
-                )}
+                {/* The Open Frontend button lives in the cockpit bar. */}
                 <button
                   type="button"
                   disabled={busy !== undefined}

@@ -58,6 +58,22 @@ fn resolve_project_path(path: Option<String>) -> Result<String, String> {
         .map_err(|error| format!("could not resolve {}: {error}", candidate.display()))
 }
 
+/// Normalize paths for case-insensitive, slash-insensitive, canonical comparisons.
+pub fn normalize_path(path: &str) -> String {
+    let p = dunce::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+    p.to_string_lossy()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_lowercase()
+}
+
+/// Check if a service's working directory matches or is a subfolder of the project directory.
+pub fn path_belongs_to_project(service_dir: &str, project_dir: &str) -> bool {
+    let s = normalize_path(service_dir);
+    let p = normalize_path(project_dir);
+    s == p || s.starts_with(&format!("{p}/"))
+}
+
 /// Scan a project directory and return the normalized project model
 #[command]
 fn detect_project(path: Option<String>) -> Result<pilot_core::ScanResult, String> {
@@ -165,7 +181,7 @@ fn start_project(path: Option<String>, service: String) -> Result<String, String
     // claiming "already running".
     if let ProcessOutcome::Snapshot(existing) = manager.status(&step.service)
         && existing.state == ProcessState::Running
-        && !existing.working_directory.eq_ignore_ascii_case(&path)
+        && !path_belongs_to_project(&existing.working_directory, &path)
     {
         return Err(format!(
             "{} is already running for another project ({}) with pid {:?}; stop it there first",
@@ -180,9 +196,9 @@ fn start_project(path: Option<String>, service: String) -> Result<String, String
         let ours = probe.pid.is_some_and(|pid| {
             manager.list().into_iter().any(|snapshot| {
                 snapshot.state == ProcessState::Running
-                    && snapshot.working_directory.eq_ignore_ascii_case(&path)
-                    && snapshot.pid == Some(pid)
-            })
+                    && path_belongs_to_project(&snapshot.working_directory, &path)
+                    && (snapshot.pid == Some(pid) || manager.contains_pid(&snapshot.label, pid))
+            }) || manager.any_contains_pid(pid).is_some()
         });
         if !probe.available && !ours {
             return Err(port_conflict_message(
@@ -504,32 +520,41 @@ fn parse_database_operation(operation: &str) -> Result<DatabaseOperation, String
 
 /// Build the database integration for a scanned project.
 ///
-/// The ORM selects the integration (Prisma/Django/Alembic); without an ORM,
-/// a PostgreSQL database falls back to raw `psql`. Anything else reports
+/// The ORM selects the integration (Prisma/Django/Alembic/Kysely); without an
+/// ORM, a PostgreSQL database falls back to raw `psql`. Anything else reports
 /// `NotImplemented` with the reason instead of guessing commands.
 fn database_integration_for(
     model: &ProjectModel,
     path: &str,
 ) -> Result<DatabaseIntegration, DatabaseOutcome> {
     let orm = model.orm.as_ref().map(|orm| orm.r#type.to_lowercase());
+    let db_type = model.database.as_ref().map(|db| db.r#type.to_lowercase());
     let integration_type = match orm.as_deref() {
         Some("prisma") => IntegrationType::Prisma,
         Some("django") => IntegrationType::Django,
         Some("alembic") => IntegrationType::Alembic,
+        // Kysely against PostgreSQL uses the raw-psql integration; otherwise
+        // the database is an embedded SQLite file (no server, no CLI).
+        Some("kysely") => match db_type.as_deref() {
+            Some("postgresql") | Some("postgres") => IntegrationType::Postgres,
+            _ => IntegrationType::Sqlite,
+        },
         _ => {
-            let db_type = model.database.as_ref().map(|db| db.r#type.to_lowercase());
             match db_type.as_deref() {
                 Some("postgresql") | Some("postgres") => IntegrationType::Postgres,
                 Some(other) => {
                     return Err(DatabaseOutcome::NotImplemented {
                         reason: format!(
-                            "no migration integration for database type '{other}' (supported: prisma, django, alembic, postgresql)"
+                            "no migration integration for database type '{other}' (supported: prisma, django, alembic, kysely/sqlite, postgresql)"
                         ),
                     });
                 }
                 None => {
+                    let detected = orm.as_deref().unwrap_or("none");
                     return Err(DatabaseOutcome::NotImplemented {
-                        reason: "no ORM or database was detected in this project".to_string(),
+                        reason: format!(
+                            "no migration integration for ORM '{detected}' (supported: prisma, django, alembic, kysely/sqlite)"
+                        ),
                     });
                 }
             }
@@ -781,7 +806,7 @@ fn start_all_project(path: Option<String>) -> Result<String, String> {
     for step in &plan.steps {
         if let ProcessOutcome::Snapshot(existing) = manager.status(&step.service)
             && existing.state == ProcessState::Running
-            && existing.working_directory.eq_ignore_ascii_case(&path)
+            && path_belongs_to_project(&existing.working_directory, &path)
         {
             lines.push(format!(
                 "{} already running (pid {:?}); skipped",
@@ -835,7 +860,7 @@ fn stop_all_project(path: Option<String>) -> Result<String, String> {
     let mut tracked: Vec<_> = manager
         .list()
         .into_iter()
-        .filter(|snapshot| snapshot.working_directory.eq_ignore_ascii_case(&path))
+        .filter(|snapshot| path_belongs_to_project(&snapshot.working_directory, &path))
         .collect();
     tracked.sort_by(|a, b| b.label.cmp(&a.label));
 
@@ -932,7 +957,7 @@ fn kill_all_project(path: Option<String>) -> Result<String, String> {
     let mut tracked: Vec<_> = manager
         .list()
         .into_iter()
-        .filter(|snapshot| snapshot.working_directory.eq_ignore_ascii_case(&path))
+        .filter(|snapshot| path_belongs_to_project(&snapshot.working_directory, &path))
         .collect();
     tracked.sort_by(|a, b| b.label.cmp(&a.label));
 
@@ -1046,17 +1071,15 @@ fn open_frontend(path: Option<String>) -> Result<String, String> {
 /// Open a directory picker and return the selected path
 #[command]
 async fn select_directory(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    use std::sync::mpsc;
     use tauri_plugin_dialog::DialogExt;
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
         .set_title("Select Project Directory")
         .pick_folder(move |path| {
             let _ = tx.send(path.map(|p| p.to_string()));
         });
-    let result = rx.recv().map_err(|e| format!("Dialog error: {}", e))?;
-    Ok(result)
+    rx.await.map_err(|e| format!("Dialog error: {e}"))
 }
 
 // Response types for Tauri serialization (camelCase to match the TS contract)

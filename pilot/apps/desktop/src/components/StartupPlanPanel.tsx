@@ -5,15 +5,19 @@
  * Every step has a Start button wired to the same lifecycle as ServiceGrid.
  */
 
-import type { StartupPlan } from 'ops-pilot-shared';
+import type { ServiceStatus, StartupPlan } from 'ops-pilot-shared';
 
 interface StartupPlanPanelProps {
   plan: StartupPlan | null;
   busyServices: Record<string, string>;
+  services: ServiceStatus[];
   onStart: (service: string) => void;
 }
 
-export function StartupPlanPanel({ plan, busyServices, onStart }: StartupPlanPanelProps) {
+export function StartupPlanPanel({ plan, busyServices, services, onStart }: StartupPlanPanelProps) {
+  const runningKeys = new Set(
+    services.filter((service) => service.state === 'running').map((service) => service.key),
+  );
   if (plan === null) {
     return null;
   }
@@ -38,10 +42,11 @@ export function StartupPlanPanel({ plan, busyServices, onStart }: StartupPlanPan
               <button
                 type="button"
                 className={busyServices[step.service] ? 'btn-busy' : 'btn-start'}
-                disabled={busyServices[step.service] !== undefined}
+                disabled={busyServices[step.service] !== undefined || runningKeys.has(step.service)}
+                title={runningKeys.has(step.service) ? `${step.service} is already running` : `Start ${step.service}`}
                 onClick={() => onStart(step.service)}
               >
-                {busyServices[step.service] ?? `Start ${step.service}`}
+                {busyServices[step.service] ?? (runningKeys.has(step.service) ? 'Running ✓' : `Start ${step.service}`)}
               </button>
             </li>
           ))}

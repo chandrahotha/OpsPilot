@@ -25,6 +25,7 @@ interface ProjectDashboardProps {
   services: ServiceStatus[];
   report: DiagnosticsReport | null;
   message: string | null;
+  onClearMessage: () => void;
   projectPath: string;
   plan: StartupPlan | null;
   busyServices: Record<string, string>;
@@ -50,6 +51,7 @@ export function ProjectDashboard({
   services,
   report,
   message,
+  onClearMessage,
   projectPath,
   plan,
   busyServices,
@@ -71,9 +73,11 @@ export function ProjectDashboard({
   const showDocker = model.docker !== undefined;
   const showDatabase = model.orm !== undefined || model.database !== undefined;
   const hasStartable = (plan?.steps.length ?? 0) > 0;
+  const hasFrontend = model.frontend !== undefined;
   const [logFocus, setLogFocus] = useState<LogFocus | null>(null);
+  const [activePanel, setActivePanel] = useState<string>('services');
 
-  // Flight summary: what is running, and — critically — whose engines they are.
+  // Flight summary
   const running = services.filter((service) => service.state === 'running');
   const pilotRunning = running.filter((service) => service.pilotStarted).length;
   const externalRunning = running.length - pilotRunning;
@@ -82,8 +86,6 @@ export function ProjectDashboard({
   const composePresent = model.docker?.compose ?? false;
   const canStopAll = bulkBusy === null && (running.length > 0 || composePresent);
 
-  // Next action: the cockpit tells the pilot what to do instead of leaving
-  // them to walk around the aircraft looking for controls.
   const nextAction = (() => {
     if (externalRunning > 0) {
       return `${externalRunning} service${externalRunning > 1 ? 's are' : ' is'} running outside Pilot — stop ${externalRunning > 1 ? 'them' : 'it'} from ${externalRunning > 1 ? 'their' : 'its'} card before starting here.`;
@@ -100,109 +102,138 @@ export function ProjectDashboard({
     return 'No startable services — check the plan notes below.';
   })();
 
+  const panels = [
+    { id: 'services', label: 'Services', always: true },
+    { id: 'plan', label: 'Plan', condition: hasStartable },
+    { id: 'docker', label: 'Docker', condition: showDocker },
+    { id: 'database', label: 'Database', condition: showDatabase },
+    { id: 'scripts', label: 'Scripts', condition: (model.commands?.length ?? 0) > 0 },
+    { id: 'capabilities', label: 'Capabilities', condition: true },
+    { id: 'diagnostics', label: 'Diagnostics', condition: report !== null },
+    { id: 'health', label: 'Health', condition: true },
+  ].filter(p => p.always || p.condition);
+
   return (
-    <div className="dashboard">
-      <header>
-        <h2>{model.project.name}</h2>
-        <p>{model.project.path || '—'}</p>
+    <div className="dashboard-compact">
+      {/* Cockpit Bar - Fixed at top */}
+      <header className="cockpit-bar-compact">
+        <div className="cockpit-left">
+          <div className="project-title">{model.project.name}</div>
+          <div className="flight-summary">
+            <span className="chip chip-running">{running.length} ●</span>
+            {externalRunning > 0 && <span className="chip chip-external">{externalRunning} ext</span>}
+            <span className="chip chip-stopped">{stoppedCount} ○</span>
+            {unknownCount > 0 && <span className="chip chip-unknown">{unknownCount} ?</span>}
+          </div>
+        </div>
+        <div className="cockpit-center">
+          <span className="next-action-compact">{nextAction}</span>
+        </div>
+        <div className="cockpit-right">
+          <div className="action-group">
+            <button className="btn-cockpit btn-start" onClick={onStartAll} disabled={!hasStartable || bulkBusy !== null} title="Start compose stack + all plan steps">
+              {bulkBusy ?? '▶ Start All'}
+            </button>
+            <button className="btn-cockpit btn-stop" onClick={onStopAll} disabled={!canStopAll} title="Stop all Pilot processes + compose down">
+              {bulkBusy ?? '■ Stop All'}
+            </button>
+            <button className="btn-cockpit btn-danger" onClick={onKillAll} disabled={bulkBusy !== null} title="Force-kill stuck Pilot processes">
+              ☠ Kill All
+            </button>
+            {hasFrontend && (
+              <button className="btn-cockpit btn-open" onClick={onOpenFrontend} disabled={frontendUrl === null} title={frontendUrl ? `Open ${frontendUrl}` : 'Start frontend first'}>
+                {frontendUrl ? '🌐 Open' : '🌐 Frontend'}
+              </button>
+            )}
+            <button className="btn-cockpit btn-diag" onClick={onRunDiagnostics} title="Run diagnostics">
+              🔍 Diag
+            </button>
+            <button className="btn-cockpit btn-rescan" onClick={onRescan} title="Rescan project">
+              ⟳ Rescan
+            </button>
+          </div>
+        </div>
       </header>
 
-      <div className="dashboard-main">
-        <section className="cockpit-bar">
-          <div className="flight-summary">
-            <span className="chip chip-running">{running.length} running</span>
-            {externalRunning > 0 && (
-              <span className="chip chip-external">{externalRunning} external</span>
+          {message && (
+            <div className="banner-compact">
+              <span>{message}</span>
+              <button type="button" className="banner-dismiss" onClick={onClearMessage} title="Dismiss">
+                ✕
+              </button>
+            </div>
+          )}
+
+      {/* Main Grid - Compact panels */}
+      <div className="cockpit-grid">
+        {/* Left: Tabbed Panels */}
+        <main className="cockpit-main">
+          <nav className="panel-tabs" role="tablist">
+            {panels.map((panel) => (
+              <button
+                key={panel.id}
+                role="tab"
+                aria-selected={activePanel === panel.id}
+                className={`panel-tab ${activePanel === panel.id ? 'active' : ''}`}
+                onClick={() => setActivePanel(panel.id)}
+              >
+                {panel.label}
+              </button>
+            ))}
+          </nav>
+          <div className="panel-content" role="tabpanel">
+            {activePanel === 'services' && (
+              <ServiceGrid
+                services={services}
+                startableKeys={plan?.steps.map((step) => step.service) ?? []}
+                busyServices={busyServices}
+                onStart={onStartProject}
+                onStop={onStopProject}
+                onStopExternal={onStopExternalProject}
+                onRestart={onRestartProject}
+                onServiceLogs={(service) => setLogFocus({ key: `proc:${service}`, ts: Date.now() })}
+              />
             )}
-            <span className="chip chip-stopped">{stoppedCount} stopped</span>
-            {unknownCount > 0 && <span className="chip chip-unknown">{unknownCount} unknown</span>}
+            {activePanel === 'plan' && hasStartable && (
+              <StartupPlanPanel plan={plan} busyServices={busyServices} services={services} onStart={onStartProject} />
+            )}
+            {activePanel === 'docker' && showDocker && (
+              <DockerPanel
+                projectPath={projectPath}
+                projectName={model.project.name}
+                hasCompose={model.docker?.compose ?? false}
+                onEvent={onEvent}
+                onViewLogs={(name) => setLogFocus({ key: `docker:${name}`, ts: Date.now() })}
+              />
+            )}
+            {activePanel === 'database' && showDatabase && (
+              <DatabasePanel
+                projectPath={projectPath}
+                ormType={model.orm?.type}
+                databaseType={model.database?.type}
+                onEvent={onEvent}
+              />
+            )}
+            {activePanel === 'scripts' && (model.commands?.length ?? 0) > 0 && (
+              <ScriptsPanel projectPath={projectPath} commands={model.commands} />
+            )}
+            {activePanel === 'capabilities' && (
+              <Capabilities model={model} evidence={evidence} />
+            )}
+            {activePanel === 'diagnostics' && report && (
+              <DiagnosticsPanel report={report} onRun={onRunDiagnostics} />
+            )}
+            {activePanel === 'health' && (
+              <SystemHealthPanel projectPath={projectPath} />
+            )}
           </div>
-          <p className="next-action">{nextAction}</p>
-          <div className="action-buttons">
-            <button
-              type="button"
-              className="btn-start"
-              onClick={onStartAll}
-              disabled={!hasStartable || bulkBusy !== null}
-              title={hasStartable ? 'Start the compose stack, then every plan step, in order' : 'No startable services were detected'}
-            >
-              {bulkBusy ?? 'Start all'}
-            </button>
-            <button
-              type="button"
-              className="btn-stop"
-              onClick={onStopAll}
-              disabled={!canStopAll}
-              title={canStopAll ? 'Stop everything Pilot started for this project, then bring the compose stack down' : 'Nothing is running that Pilot can stop'}
-            >
-              {bulkBusy ?? 'Stop all'}
-            </button>
-            <button
-              type="button"
-              className="btn-danger"
-              onClick={onKillAll}
-              disabled={bulkBusy !== null}
-              title="Force-terminate stuck processes started by Pilot for this project. Only for use when Stop All did not work."
-            >
-              Kill All Nodes
-            </button>
-            <button type="button" onClick={onRunDiagnostics} title="Run the deterministic diagnostics checks">
-              Diagnostics
-            </button>
-            <button type="button" onClick={onRescan} title="Re-scan the project directory">
-              Rescan
-            </button>
-          </div>
+        </main>
 
-          {message && <pre className="banner banner-pre">{message}</pre>}
-        </section>
-
-        <ServiceGrid
-          services={services}
-          startableKeys={plan?.steps.map((step) => step.service) ?? []}
-          busyServices={busyServices}
-          frontendUrl={frontendUrl}
-          onStart={onStartProject}
-          onStop={onStopProject}
-          onStopExternal={onStopExternalProject}
-          onRestart={onRestartProject}
-          onOpenFrontend={onOpenFrontend}
-          onServiceLogs={(service) => setLogFocus({ key: `proc:${service}`, ts: Date.now() })}
-        />
-
-        <StartupPlanPanel plan={plan} busyServices={busyServices} onStart={onStartProject} />
-
-        {showDocker && (
-          <DockerPanel
-            projectPath={projectPath}
-            projectName={model.project.name}
-            hasCompose={model.docker?.compose ?? false}
-            onEvent={onEvent}
-            onViewLogs={(name) => setLogFocus({ key: `docker:${name}`, ts: Date.now() })}
-          />
-        )}
-
-        {showDatabase && (
-          <DatabasePanel
-            projectPath={projectPath}
-            ormType={model.orm?.type}
-            databaseType={model.database?.type}
-            onEvent={onEvent}
-          />
-        )}
-
-        <ScriptsPanel projectPath={projectPath} commands={model.commands} />
-
-        <Capabilities model={model} evidence={evidence} />
-
-        <DiagnosticsPanel report={report} onRun={onRunDiagnostics} />
-
-        <SystemHealthPanel projectPath={projectPath} />
+        {/* Right: Logs Panel (Collapsible) */}
+        <aside className="cockpit-logs">
+          <LogsPanel events={events} projectName={model.project.name} focus={logFocus} />
+        </aside>
       </div>
-
-      <aside className="dashboard-side">
-        <LogsPanel events={events} projectName={model.project.name} focus={logFocus} />
-      </aside>
     </div>
   );
 }

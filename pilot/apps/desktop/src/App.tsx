@@ -235,6 +235,17 @@ function App() {
   const openFrontend = async () => {
     pushEvent('Opening frontend in browser', 'info');
     try {
+      // If frontend isn't running, try to start it first
+      if (frontendUrl === null) {
+        const frontendService = services.find((service) => service.key === 'frontend');
+        if (frontendService && frontendService.state !== 'running') {
+          pushEvent('Frontend not running, starting it first...', 'info');
+          await runServiceAction('frontend', 'Starting…', () => api.startProject(currentPath, 'frontend'));
+          // Wait a bit for the port to be ready
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          void refreshStatus();
+        }
+      }
       const result = await api.openFrontend(currentPath);
       setMessage(result);
       pushEvent(result, 'success');
@@ -314,49 +325,30 @@ function App() {
 
   return (
     <div className='app'>
-      <header className='command-header'>
-        <div className='header-left'>
-          <h1>OpsPilot</h1>
-          <p>Project Command Center</p>
-        </div>
-        <div className='header-center'>
-          <div className='header-project' title={currentPath || 'No project selected'}>
-            {scan?.model?.project.name ?? 'No project'}
-          </div>
-          <span className={STATUS_CLASS[overallStatus]}>{overallStatus}</span>
-        </div>
-        <div className='header-right'>
-          <button
-            type='button'
-            className='btn-open'
-            onClick={() => void openFrontend()}
-            disabled={frontendUrl === null}
-            title={
-              frontendUrl === null
-                ? 'Start the frontend first, then open it here'
-                : `Open ${frontendUrl} in the default browser`
-            }
-          >
-            {frontendUrl === null ? 'Frontend Not Running' : 'Open Frontend'}
-          </button>
-          <div className='current-path' title={currentPath || 'Current directory'}>
-            {currentPath || 'Current directory'}
-          </div>
-          <button
-            className='btn btn-secondary select-dir-btn'
-            onClick={handleSelectDirectory}
-            disabled={isScanning}
-          >
-            {isScanning ? 'Scanning...' : 'Select Project'}
-          </button>
-          <button
-            className='btn btn-ghost log-toggle'
-            onClick={() => setShowLogs(!showLogs)}
-            title={showLogs ? 'Hide scan logs' : 'Show scan logs'}
-          >
-            {showLogs ? 'Hide Logs' : 'Show Logs'}
-          </button>
-        </div>
+      <header className='command-header-slim'>
+        <span className='brand-slim'>OpsPilot</span>
+        <span className='header-project' title={currentPath || 'No project selected'}>
+          {scan?.model?.project.name ?? 'No project'}
+        </span>
+        <span className={STATUS_CLASS[overallStatus]}>{overallStatus}</span>
+        <span className='header-spacer' />
+        <span className='current-path' title={currentPath || 'Current directory'}>
+          {currentPath || 'Current directory'}
+        </span>
+        <button
+          className='btn btn-secondary btn-slim'
+          onClick={handleSelectDirectory}
+          disabled={isScanning}
+        >
+          {isScanning ? 'Scanning...' : 'Select Project'}
+        </button>
+        <button
+          className='btn btn-ghost btn-slim'
+          onClick={() => setShowLogs(!showLogs)}
+          title={showLogs ? 'Hide scan logs' : 'Show scan logs'}
+        >
+          {showLogs ? 'Hide Logs' : 'Show Logs'}
+        </button>
       </header>
 
       <main>
@@ -394,6 +386,7 @@ function App() {
             services={services}
             report={report}
             message={message}
+            onClearMessage={() => setMessage(null)}
             projectPath={currentPath}
             plan={plan}
             busyServices={busyServices}

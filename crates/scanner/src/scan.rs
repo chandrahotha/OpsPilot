@@ -22,12 +22,89 @@ pub fn scan_with_detectors(
     let mut model = ProjectModel::new(project_name_from_path(&project_path), &project_path);
     let mut evidence = Vec::new();
 
+    // 1. Scan root directory
     for detector in detectors {
         if !detector.detect(&project_path) {
             continue;
         }
 
         evidence.extend(detector.apply(&project_path, &mut model));
+    }
+
+    // 2. Scan standard monorepo / subfolder paths if directories exist
+    const SUBDIRS: &[&str] = &[
+        "frontend", "client", "web", "ui",
+        "backend", "server", "api", "srv",
+        "apps/web", "apps/client", "apps/frontend", "apps/ui",
+        "apps/api", "apps/backend", "apps/server",
+    ];
+
+    for rel_sub in SUBDIRS {
+        let sub_path = std::path::Path::new(&project_path).join(rel_sub);
+        if !sub_path.is_dir() {
+            continue;
+        }
+        let sub_str = sub_path.to_string_lossy();
+        for detector in detectors {
+            if !detector.detect(&sub_str) {
+                continue;
+            }
+
+            let mut sub_model =
+                ProjectModel::new(project_name_from_path(&sub_str), &*sub_str);
+            let sub_evidence = detector.apply(&sub_str, &mut sub_model);
+
+            if model.frontend.is_none() && sub_model.frontend.is_some() {
+                model.frontend = sub_model.frontend;
+            }
+            if model.backend.is_none() && sub_model.backend.is_some() {
+                model.backend = sub_model.backend;
+            }
+            if model.database.is_none() && sub_model.database.is_some() {
+                model.database = sub_model.database;
+            }
+            if model.orm.is_none() && sub_model.orm.is_some() {
+                model.orm = sub_model.orm;
+            }
+            if model.docker.is_none() && sub_model.docker.is_some() {
+                model.docker = sub_model.docker;
+            }
+
+            let is_be = matches!(
+                *rel_sub,
+                "backend" | "server" | "api" | "srv" | "apps/api" | "apps/backend" | "apps/server"
+            );
+            let is_fe = matches!(
+                *rel_sub,
+                "frontend"
+                    | "client"
+                    | "web"
+                    | "ui"
+                    | "apps/web"
+                    | "apps/client"
+                    | "apps/frontend"
+                    | "apps/ui"
+            );
+
+            for mut cmd in sub_model.commands {
+                cmd.source = format!("{rel_sub}/{}", cmd.source);
+                if is_be && (cmd.name == "dev" || cmd.name == "start" || cmd.name == "serve") {
+                    cmd.name = format!("{}:backend", cmd.name);
+                } else if is_fe
+                    && (cmd.name == "dev" || cmd.name == "start" || cmd.name == "serve")
+                {
+                    cmd.name = format!("{}:frontend", cmd.name);
+                }
+                if !model.commands.iter().any(|c| c.name == cmd.name) {
+                    model.commands.push(cmd);
+                }
+            }
+
+            for ev in sub_evidence {
+                // Don't prefix with subdirectory since evidence already contains file paths
+                evidence.push(ev);
+            }
+        }
     }
 
     evidence.sort();

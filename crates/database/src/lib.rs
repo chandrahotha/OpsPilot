@@ -118,6 +118,12 @@ pub enum IntegrationType {
     Alembic,
     /// Raw PostgreSQL (psql)
     Postgres,
+    /// Embedded SQLite file database (e.g. Kysely + `node:sqlite`).
+    ///
+    /// There is no server to start and no migration CLI to run: the schema
+    /// migrates inside the backend process on boot. Operations are file
+    /// operations or honest guidance, never invented commands.
+    Sqlite,
 }
 
 /// Database integration configuration
@@ -158,6 +164,40 @@ impl DatabaseOutcome {
     }
 }
 
+use std::sync::mpsc;
+
+/// Handle for a running database operation
+pub struct DatabaseOperationHandle {
+    receiver: mpsc::Receiver<DatabaseOutcome>,
+    label: String,
+    process_manager: LocalProcessManager,
+}
+
+impl DatabaseOperationHandle {
+    /// Wait for the operation to complete, blocking until done
+    pub fn wait(self) -> DatabaseOutcome {
+        self.receiver.recv().unwrap_or_else(|_| DatabaseOutcome::Error {
+            message: "operation channel disconnected".to_string(),
+            output: None,
+        })
+    }
+
+    /// Try to get the result without blocking
+    pub fn try_wait(&self) -> Option<DatabaseOutcome> {
+        self.receiver.try_recv().ok()
+    }
+
+    /// Get the process label for log access
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Get access to the process manager for log retrieval
+    pub fn process_manager(&self) -> &LocalProcessManager {
+        &self.process_manager
+    }
+}
+
 /// Database manager that executes operations via the process manager
 pub struct DatabaseManager {
     process_manager: LocalProcessManager,
@@ -171,7 +211,7 @@ impl DatabaseManager {
         }
     }
 
-    /// Execute a database operation for a given integration
+    /// Execute a database operation for a given integration (blocking for backward compatibility)
     pub fn execute(
         &self,
         integration: &DatabaseIntegration,
@@ -183,11 +223,29 @@ impl DatabaseManager {
             };
         }
 
-        match integration.integration_type {
-            IntegrationType::Prisma => self.execute_prisma(integration, operation),
-            IntegrationType::Django => self.execute_django(integration, operation),
-            IntegrationType::Alembic => self.execute_alembic(integration, operation),
-            IntegrationType::Postgres => self.execute_postgres(integration, operation),
+        self.execute_async(integration, operation).wait()
+    }
+
+    /// Execute a database operation asynchronously, returning a handle that can be polled
+    pub fn execute_async(
+        &self,
+        integration: &DatabaseIntegration,
+        operation: DatabaseOperation,
+    ) -> DatabaseOperationHandle {
+        let (tx, rx) = mpsc::channel();
+        let integration = integration.clone();
+        let process_manager = self.process_manager.clone();
+        let label = format!("db-{}", operation.as_str());
+
+        std::thread::spawn(move || {
+            let outcome = Self::run_command_static(&process_manager, &integration, operation);
+            let _ = tx.send(outcome);
+        });
+
+        DatabaseOperationHandle {
+            receiver: rx,
+            label,
+            process_manager: self.process_manager.clone(),
         }
     }
 
@@ -202,255 +260,435 @@ impl DatabaseManager {
         integration: &DatabaseIntegration,
         operation: DatabaseOperation,
     ) -> DatabaseOutcome {
-        match integration.integration_type {
-            IntegrationType::Prisma => self.execute_prisma(integration, operation),
-            IntegrationType::Django => self.execute_django(integration, operation),
-            IntegrationType::Alembic => self.execute_alembic(integration, operation),
-            IntegrationType::Postgres => self.execute_postgres(integration, operation),
+        self.execute_confirmed_async(integration, operation).wait()
+    }
+
+    /// Execute a database operation asynchronously, bypassing the destructive-operation gate
+    pub fn execute_confirmed_async(
+        &self,
+        integration: &DatabaseIntegration,
+        operation: DatabaseOperation,
+    ) -> DatabaseOperationHandle {
+        let (tx, rx) = mpsc::channel();
+        let integration = integration.clone();
+        let process_manager = self.process_manager.clone();
+        let label = format!("db-{}", operation.as_str());
+
+        std::thread::spawn(move || {
+            let outcome = Self::run_command_static(&process_manager, &integration, operation);
+            let _ = tx.send(outcome);
+        });
+
+        DatabaseOperationHandle {
+            receiver: rx,
+            label,
+            process_manager: self.process_manager.clone(),
         }
     }
 
-    /// Execute a Prisma operation
-    fn execute_prisma(
-        &self,
+    /// Internal static method to run a command (used by async handlers)
+    fn run_command_static(
+        process_manager: &LocalProcessManager,
         integration: &DatabaseIntegration,
         operation: DatabaseOperation,
     ) -> DatabaseOutcome {
-        let command = match operation {
-            DatabaseOperation::Status => "prisma validate".to_string(),
-            DatabaseOperation::Migrate => "prisma migrate deploy".to_string(),
-            DatabaseOperation::Seed => "prisma db seed".to_string(),
-            DatabaseOperation::Reset => "prisma migrate reset --force".to_string(),
+        if matches!(integration.integration_type, IntegrationType::Sqlite) {
+            return Self::execute_sqlite(integration, operation);
+        }
+
+        let command = match integration.integration_type {
+            IntegrationType::Prisma => Self::prisma_command(integration, operation),
+            IntegrationType::Django => Self::django_command(integration, operation),
+            IntegrationType::Alembic => Self::alembic_command(integration, operation),
+            IntegrationType::Postgres => Self::postgres_command(integration, operation),
+            IntegrationType::Sqlite => unreachable!("handled above"),
+        };
+
+        match command {
+            Ok(cmd) => Self::run_command_impl(process_manager, integration, &cmd, operation),
+            Err(outcome) => outcome,
+        }
+    }
+
+    fn prisma_command(
+        integration: &DatabaseIntegration,
+        operation: DatabaseOperation,
+    ) -> Result<String, DatabaseOutcome> {
+        match operation {
+            DatabaseOperation::Status => Ok("prisma validate".to_string()),
+            DatabaseOperation::Migrate => Ok("prisma migrate deploy".to_string()),
+            DatabaseOperation::Seed => Ok("prisma db seed".to_string()),
+            DatabaseOperation::Reset => Ok("prisma migrate reset --force".to_string()),
             DatabaseOperation::Backup => {
                 if let Some(db) = &integration.database {
                     if matches!(db.r#type, DatabaseType::PostgreSQL) {
-                        format!(
+                        Ok(format!(
                             "pg_dump -h {} -p {} -U postgres -d {} > backup.sql",
                             db.host, db.port, db.name
-                        )
+                        ))
                     } else {
-                        return DatabaseOutcome::NotImplemented {
-                            reason: "Backup not implemented for this database type with Prisma"
-                                .to_string(),
-                        };
+                        Err(DatabaseOutcome::NotImplemented {
+                            reason: "Backup not implemented for this database type with Prisma".to_string(),
+                        })
                     }
                 } else {
-                    return DatabaseOutcome::Error {
+                    Err(DatabaseOutcome::Error {
                         message: "Database connection info not available".to_string(),
                         output: None,
-                    };
+                    })
                 }
             }
             DatabaseOperation::Restore => {
                 if let Some(db) = &integration.database {
                     if matches!(db.r#type, DatabaseType::PostgreSQL) {
-                        format!(
+                        Ok(format!(
                             "psql -h {} -p {} -U postgres -d {} < backup.sql",
                             db.host, db.port, db.name
-                        )
+                        ))
                     } else {
-                        return DatabaseOutcome::NotImplemented {
-                            reason: "Restore not implemented for this database type with Prisma"
-                                .to_string(),
-                        };
+                        Err(DatabaseOutcome::NotImplemented {
+                            reason: "Restore not implemented for this database type with Prisma".to_string(),
+                        })
                     }
                 } else {
-                    return DatabaseOutcome::Error {
+                    Err(DatabaseOutcome::Error {
                         message: "Database connection info not available".to_string(),
                         output: None,
-                    };
+                    })
                 }
             }
-        };
-
-        self.run_command(integration, &command, operation)
+        }
     }
 
-    /// Execute a Django operation
-    fn execute_django(
-        &self,
+    fn django_command(
         integration: &DatabaseIntegration,
         operation: DatabaseOperation,
-    ) -> DatabaseOutcome {
+    ) -> Result<String, DatabaseOutcome> {
         let python = std::env::var("PYTHON_EXECUTABLE").unwrap_or_else(|_| "python".to_string());
         let manage_py = format!("{}/manage.py", integration.project_dir);
 
-        let command = match operation {
-            DatabaseOperation::Status => format!("{} {} check --deploy", python, manage_py),
-            DatabaseOperation::Migrate => format!("{} {} migrate --noinput", python, manage_py),
-            DatabaseOperation::Seed => format!("{} {} loaddata fixtures/*.json", python, manage_py),
-            DatabaseOperation::Reset => format!(
+        match operation {
+            DatabaseOperation::Status => Ok(format!("{} {} check --deploy", python, manage_py)),
+            DatabaseOperation::Migrate => Ok(format!("{} {} migrate --noinput", python, manage_py)),
+            DatabaseOperation::Seed => Ok(format!("{} {} loaddata fixtures/*.json", python, manage_py)),
+            DatabaseOperation::Reset => Ok(format!(
                 "{} {} flush --noinput && {} {} migrate --noinput",
                 python, manage_py, python, manage_py
-            ),
+            )),
             DatabaseOperation::Backup => {
                 if let Some(db) = &integration.database {
                     if matches!(db.r#type, DatabaseType::PostgreSQL) {
-                        format!(
+                        Ok(format!(
                             "pg_dump -h {} -p {} -U postgres -d {} > backup.sql",
                             db.host, db.port, db.name
-                        )
+                        ))
                     } else {
-                        return DatabaseOutcome::NotImplemented {
-                            reason: "Backup not implemented for this database type with Django"
-                                .to_string(),
-                        };
+                        Err(DatabaseOutcome::NotImplemented {
+                            reason: "Backup not implemented for this database type with Django".to_string(),
+                        })
                     }
                 } else {
-                    return DatabaseOutcome::Error {
+                    Err(DatabaseOutcome::Error {
                         message: "Database connection info not available".to_string(),
                         output: None,
-                    };
+                    })
                 }
             }
             DatabaseOperation::Restore => {
                 if let Some(db) = &integration.database {
                     if matches!(db.r#type, DatabaseType::PostgreSQL) {
-                        format!(
+                        Ok(format!(
                             "psql -h {} -p {} -U postgres -d {} < backup.sql",
                             db.host, db.port, db.name
-                        )
+                        ))
                     } else {
-                        return DatabaseOutcome::NotImplemented {
-                            reason: "Restore not implemented for this database type with Django"
-                                .to_string(),
-                        };
+                        Err(DatabaseOutcome::NotImplemented {
+                            reason: "Restore not implemented for this database type with Django".to_string(),
+                        })
                     }
                 } else {
-                    return DatabaseOutcome::Error {
+                    Err(DatabaseOutcome::Error {
                         message: "Database connection info not available".to_string(),
                         output: None,
-                    };
+                    })
                 }
             }
-        };
-
-        self.run_command(integration, &command, operation)
+        }
     }
 
-    /// Execute an Alembic operation
-    fn execute_alembic(
-        &self,
-        integration: &DatabaseIntegration,
+    fn alembic_command(
+        _integration: &DatabaseIntegration,
         operation: DatabaseOperation,
-    ) -> DatabaseOutcome {
-        let command = match operation {
-            DatabaseOperation::Status => "alembic current".to_string(),
-            DatabaseOperation::Migrate => "alembic upgrade head".to_string(),
-            DatabaseOperation::Seed => {
-                return DatabaseOutcome::NotImplemented {
-                    reason: "Alembic doesn't have built-in seeding support".to_string(),
-                };
-            }
-            DatabaseOperation::Reset => {
-                "alembic downgrade base && alembic upgrade head".to_string()
-            }
+    ) -> Result<String, DatabaseOutcome> {
+        match operation {
+            DatabaseOperation::Status => Ok("alembic current".to_string()),
+            DatabaseOperation::Migrate => Ok("alembic upgrade head".to_string()),
+            DatabaseOperation::Seed => Err(DatabaseOutcome::NotImplemented {
+                reason: "Alembic doesn't have built-in seeding support".to_string(),
+            }),
+            DatabaseOperation::Reset => Ok("alembic downgrade base && alembic upgrade head".to_string()),
             DatabaseOperation::Backup => {
-                if let Some(db) = &integration.database {
+                if let Some(db) = &_integration.database {
                     if matches!(db.r#type, DatabaseType::PostgreSQL) {
-                        format!(
+                        Ok(format!(
                             "pg_dump -h {} -p {} -U postgres -d {} > backup.sql",
                             db.host, db.port, db.name
-                        )
+                        ))
                     } else {
-                        return DatabaseOutcome::NotImplemented {
-                            reason: "Backup not implemented for this database type with Alembic"
-                                .to_string(),
-                        };
+                        Err(DatabaseOutcome::NotImplemented {
+                            reason: "Backup not implemented for this database type with Alembic".to_string(),
+                        })
                     }
                 } else {
-                    return DatabaseOutcome::Error {
+                    Err(DatabaseOutcome::Error {
                         message: "Database connection info not available".to_string(),
                         output: None,
-                    };
+                    })
                 }
             }
             DatabaseOperation::Restore => {
-                if let Some(db) = &integration.database {
+                if let Some(db) = &_integration.database {
                     if matches!(db.r#type, DatabaseType::PostgreSQL) {
-                        format!(
+                        Ok(format!(
                             "psql -h {} -p {} -U postgres -d {} < backup.sql",
                             db.host, db.port, db.name
-                        )
+                        ))
                     } else {
-                        return DatabaseOutcome::NotImplemented {
-                            reason: "Restore not implemented for this database type with Alembic"
-                                .to_string(),
-                        };
+                        Err(DatabaseOutcome::NotImplemented {
+                            reason: "Restore not implemented for this database type with Alembic".to_string(),
+                        })
                     }
                 } else {
-                    return DatabaseOutcome::Error {
+                    Err(DatabaseOutcome::Error {
                         message: "Database connection info not available".to_string(),
                         output: None,
-                    };
+                    })
                 }
             }
-        };
-
-        self.run_command(integration, &command, operation)
+        }
     }
 
-    /// Execute a raw PostgreSQL operation
-    fn execute_postgres(
-        &self,
+    fn postgres_command(
         integration: &DatabaseIntegration,
         operation: DatabaseOperation,
-    ) -> DatabaseOutcome {
+    ) -> Result<String, DatabaseOutcome> {
         let db = match &integration.database {
             Some(db) => db,
             None => {
-                return DatabaseOutcome::Error {
-                    message: "Database connection info required for PostgreSQL operations"
-                        .to_string(),
+                return Err(DatabaseOutcome::Error {
+                    message: "Database connection info required for PostgreSQL operations".to_string(),
                     output: None,
-                };
+                });
             }
         };
 
         if !matches!(db.r#type, DatabaseType::PostgreSQL) {
-            return DatabaseOutcome::NotImplemented {
+            return Err(DatabaseOutcome::NotImplemented {
                 reason: "PostgreSQL integration only supports PostgreSQL databases".to_string(),
-            };
+            });
         }
 
-        let command = match operation {
+        match operation {
+            DatabaseOperation::Status => Ok(format!(
+                "psql -h {} -p {} -U postgres -d {} -c \"SELECT 1\"",
+                db.host, db.port, db.name
+            )),
+            DatabaseOperation::Migrate => Err(DatabaseOutcome::NotImplemented {
+                reason: "Raw PostgreSQL doesn't have a migration system; use Prisma, Django, or Alembic".to_string(),
+            }),
+            DatabaseOperation::Seed => Err(DatabaseOutcome::NotImplemented {
+                reason: "Raw PostgreSQL doesn't have a seeding system".to_string(),
+            }),
+            DatabaseOperation::Reset => Ok(format!(
+                "psql -h {} -p {} -U postgres -d {} -c \"DROP SCHEMA public CASCADE; CREATE SCHEMA public;\"",
+                db.host, db.port, db.name
+            )),
+            DatabaseOperation::Backup => Ok(format!(
+                "pg_dump -h {} -p {} -U postgres -d {} > backup.sql",
+                db.host, db.port, db.name
+            )),
+            DatabaseOperation::Restore => Ok(format!(
+                "psql -h {} -p {} -U postgres -d {} < backup.sql",
+                db.host, db.port, db.name
+            )),
+        }
+    }
+
+    /// File extensions that mark an embedded SQLite database.
+    const SQLITE_EXTENSIONS: &[&str] = &["db", "sqlite", "sqlite3", "db3"];
+
+    /// Directories never descended into while looking for database files.
+    const SQLITE_SKIPPED_DIRS: &[&str] = &[
+        "node_modules",
+        "target",
+        "dist",
+        "build",
+        ".git",
+        ".next",
+        "coverage",
+        ".turbo",
+    ];
+
+    /// Find SQLite database files under a project directory.
+    ///
+    /// The walk is depth-limited and skips dependency/build output so a
+    /// status check stays fast even in large monorepos.
+    fn find_sqlite_files(project_dir: &str) -> Vec<std::path::PathBuf> {
+        fn visit(dir: &std::path::Path, depth: u8, out: &mut Vec<std::path::PathBuf>) {
+            if depth > 4 {
+                return;
+            }
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let skip = path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| {
+                            crate::DatabaseManager::SQLITE_SKIPPED_DIRS.contains(&name)
+                        });
+                    if !skip {
+                        visit(&path, depth + 1, out);
+                    }
+                } else if path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| {
+                        crate::DatabaseManager::SQLITE_EXTENSIONS
+                            .contains(&ext.to_lowercase().as_str())
+                    })
+                {
+                    out.push(path);
+                }
+            }
+        }
+
+        let mut files = Vec::new();
+        visit(std::path::Path::new(project_dir), 0, &mut files);
+        files.sort();
+        files
+    }
+
+    /// Execute a file-based SQLite database operation.
+    ///
+    /// There is no server and no migration CLI: the backend process creates,
+    /// migrates and seeds the file on boot. Status and backup inspect the
+    /// files; migrate/seed point at the backend instead of pretending.
+    fn execute_sqlite(
+        integration: &DatabaseIntegration,
+        operation: DatabaseOperation,
+    ) -> DatabaseOutcome {
+        const BOOT_GUIDANCE: &str = "file-based databases migrate and seed automatically when the backend boots; start the backend and look for 'Migrations completed' in its logs";
+
+        match operation {
             DatabaseOperation::Status => {
-                format!(
-                    "psql -h {} -p {} -U postgres -d {} -c \"SELECT 1\"",
-                    db.host, db.port, db.name
-                )
+                let files = Self::find_sqlite_files(&integration.project_dir);
+                if files.is_empty() {
+                    DatabaseOutcome::Error {
+                        message: format!(
+                            "no SQLite database file found under {}; {BOOT_GUIDANCE}",
+                            integration.project_dir
+                        ),
+                        output: None,
+                    }
+                } else {
+                    let list = files
+                        .iter()
+                        .map(|path| {
+                            let size = std::fs::metadata(path)
+                                .map(|meta| meta.len())
+                                .unwrap_or(0);
+                            format!(
+                                "{} ({} bytes)",
+                                path.strip_prefix(&integration.project_dir)
+                                    .unwrap_or(path)
+                                    .to_string_lossy(),
+                                size
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    DatabaseOutcome::Success {
+                        output: format!("SQLite database file(s):\n{list}"),
+                    }
+                }
             }
-            DatabaseOperation::Migrate => {
-                return DatabaseOutcome::NotImplemented {
-                    reason: "Raw PostgreSQL doesn't have a migration system; use Prisma, Django, or Alembic".to_string(),
-                };
-            }
-            DatabaseOperation::Seed => {
-                return DatabaseOutcome::NotImplemented {
-                    reason: "Raw PostgreSQL doesn't have a seeding system".to_string(),
-                };
-            }
-            DatabaseOperation::Reset => {
-                format!(
-                    "psql -h {} -p {} -U postgres -d {} -c \"DROP SCHEMA public CASCADE; CREATE SCHEMA public;\"",
-                    db.host, db.port, db.name
-                )
+            DatabaseOperation::Migrate | DatabaseOperation::Seed => {
+                DatabaseOutcome::NotImplemented {
+                    reason: format!(
+                        "{} has no CLI for SQLite; {BOOT_GUIDANCE}",
+                        operation.as_str()
+                    ),
+                }
             }
             DatabaseOperation::Backup => {
-                format!(
-                    "pg_dump -h {} -p {} -U postgres -d {} > backup.sql",
-                    db.host, db.port, db.name
-                )
+                let files = Self::find_sqlite_files(&integration.project_dir);
+                let Some(source) = files.first() else {
+                    return DatabaseOutcome::Error {
+                        message: "no SQLite database file found to back up".to_string(),
+                        output: None,
+                    };
+                };
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|duration| duration.as_secs())
+                    .unwrap_or(0);
+                let backup = source.with_extension(format!("backup-{timestamp}.db"));
+                match std::fs::copy(source, &backup) {
+                    Ok(_) => DatabaseOutcome::Success {
+                        output: format!("backed up to {}", backup.to_string_lossy()),
+                    },
+                    Err(error) => DatabaseOutcome::Error {
+                        message: format!("backup failed: {error}"),
+                        output: None,
+                    },
+                }
             }
-            DatabaseOperation::Restore => {
-                format!(
-                    "psql -h {} -p {} -U postgres -d {} < backup.sql",
-                    db.host, db.port, db.name
-                )
+            DatabaseOperation::Reset => {
+                let files = Self::find_sqlite_files(&integration.project_dir);
+                if files.is_empty() {
+                    return DatabaseOutcome::Error {
+                        message: "no SQLite database file found to reset".to_string(),
+                        output: None,
+                    };
+                }
+                let mut removed = Vec::new();
+                for file in &files {
+                    // Remove journal artifacts alongside the main file.
+                    for extra in [
+                        file.with_extension("db-wal"),
+                        file.with_extension("db-shm"),
+                        file.with_extension("db-journal"),
+                    ] {
+                        let _ = std::fs::remove_file(&extra);
+                    }
+                    match std::fs::remove_file(file) {
+                        Ok(()) => removed.push(file.to_string_lossy().to_string()),
+                        Err(error) => {
+                            return DatabaseOutcome::Error {
+                                message: format!(
+                                    "could not remove {}: {error}",
+                                    file.to_string_lossy()
+                                ),
+                                output: None,
+                            };
+                        }
+                    }
+                }
+                DatabaseOutcome::Success {
+                    output: format!(
+                        "removed {};\nrestart the backend to recreate it (migrations + seed run on boot)",
+                        removed.join(", ")
+                    ),
+                }
             }
-        };
-
-        self.run_command(integration, &command, operation)
+            DatabaseOperation::Restore => DatabaseOutcome::NotImplemented {
+                reason: "automatic restore is not supported for SQLite; stop the backend, copy a *.backup-*.db file back over the live database file, then start the backend".to_string(),
+            },
+        }
     }
 
     /// Run a command through the process manager and wait for it to finish.
@@ -464,22 +702,31 @@ impl DatabaseManager {
         command: &str,
         operation: DatabaseOperation,
     ) -> DatabaseOutcome {
+        Self::run_command_impl(&self.process_manager, integration, command, operation)
+    }
+
+    fn run_command_impl(
+        process_manager: &LocalProcessManager,
+        integration: &DatabaseIntegration,
+        command: &str,
+        operation: DatabaseOperation,
+    ) -> DatabaseOutcome {
         let request = ProcessRequest::new(
             format!("db-{}", operation.as_str()),
             command.to_string(),
             integration.project_dir.clone(),
         );
 
-        let outcome = self.process_manager.start(&request);
+        let outcome = process_manager.start(&request);
 
         match outcome {
             ProcessOutcome::Started(_snapshot) => {
                 let deadline = Instant::now() + OPERATION_TIMEOUT;
                 loop {
-                    match self.process_manager.status(&request.label) {
+                    match process_manager.status(&request.label) {
                         ProcessOutcome::Snapshot(s) => {
                             if s.state == ProcessState::Exited {
-                                let logs = self.tail_logs(&request.label);
+                                let logs = Self::tail_logs_static(process_manager, &request.label);
                                 if s.exit_code == Some(0) {
                                     return DatabaseOutcome::Success {
                                         output: if logs.is_empty() {
@@ -511,27 +758,27 @@ impl DatabaseManager {
                                     "lost track of the {} process ({label})",
                                     operation.as_str()
                                 ),
-                                output: Some(self.tail_logs(&request.label)),
+                                output: Some(Self::tail_logs_static(process_manager, &request.label)),
                             };
                         }
                         ProcessOutcome::Error(e) => {
                             return DatabaseOutcome::Error {
                                 message: e,
-                                output: Some(self.tail_logs(&request.label)),
+                                output: Some(Self::tail_logs_static(process_manager, &request.label)),
                             };
                         }
                         _ => {}
                     }
 
                     if Instant::now() >= deadline {
-                        let _ = self.process_manager.stop(&request.label);
+                        let _ = process_manager.stop(&request.label);
                         return DatabaseOutcome::Error {
                             message: format!(
                                 "{} timed out after {}s and was stopped",
                                 operation.as_str(),
                                 OPERATION_TIMEOUT.as_secs()
                             ),
-                            output: Some(self.tail_logs(&request.label)),
+                            output: Some(Self::tail_logs_static(process_manager, &request.label)),
                         };
                     }
 
@@ -555,7 +802,11 @@ impl DatabaseManager {
 
     /// Last lines of captured stdout/stderr for a database operation.
     fn tail_logs(&self, label: &str) -> String {
-        self.process_manager
+        Self::tail_logs_static(&self.process_manager, label)
+    }
+
+    fn tail_logs_static(process_manager: &LocalProcessManager, label: &str) -> String {
+        process_manager
             .log_buffer(label)
             .map(|buffer| {
                 buffer
@@ -587,17 +838,38 @@ fn fmt_exit(code: Option<i32>) -> String {
 /// mean anything the tool itself reported). Returns `None` when the tool ran
 /// and failed on its own terms.
 fn missing_tool_hint(command: &str, logs: &str) -> Option<String> {
-    let lowered = logs.to_lowercase();
-    let missing = lowered.contains("not recognized as an internal or external command")
-        || lowered.contains("command not found");
-    if !missing {
-        return None;
-    }
-
     let tool = command
         .split_whitespace()
         .next()
         .unwrap_or("the required tool");
+
+    // Check for missing tool errors more precisely:
+    // - Look for the tool name in the error message
+    // - Check for specific error patterns that indicate "command not found"
+    let tool_lower = tool.to_lowercase();
+    let logs_lower = logs.to_lowercase();
+
+    // Patterns that strongly indicate "command not found"
+    let missing_patterns = [
+        format!("{tool_lower}: command not found"),
+        format!("{tool_lower} : command not found"),
+        format!("'{tool_lower}' is not recognized"),
+        format!("{tool_lower} is not recognized"),
+        format!("command not found: {tool_lower}"),
+        format!("executable file not found: {tool_lower}"),
+        format!("{tool_lower}: not found"),
+    ];
+
+    let has_missing_pattern = missing_patterns.iter().any(|p| logs_lower.contains(p));
+
+    // Also check generic patterns but only if the tool name appears nearby
+    let generic_missing = (logs_lower.contains("command not found") || logs_lower.contains("not recognized as an internal or external command"))
+        && logs_lower.contains(&tool_lower);
+
+    if !has_missing_pattern && !generic_missing {
+        return None;
+    }
+
     Some(format!(
         "`{tool}` is not installed or not on PATH; install the client, or run the database with `docker compose up`"
     ))
@@ -649,6 +921,131 @@ mod tests {
                 risk: RiskLevel::High
             }
         ));
+    }
+
+    fn sqlite_integration(project_dir: &str) -> DatabaseIntegration {
+        DatabaseIntegration {
+            integration_type: IntegrationType::Sqlite,
+            project_dir: project_dir.to_string(),
+            database: None,
+            env: HashMap::new(),
+        }
+    }
+
+    fn sqlite_fixture(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("pilot-sqlite-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("fixture dir must be created");
+        dir
+    }
+
+    #[test]
+    fn sqlite_status_reports_found_database_files() {
+        let dir = sqlite_fixture("status");
+        std::fs::write(dir.join("app.db"), b"fake-sqlite").expect("db file must be written");
+        std::fs::create_dir_all(dir.join("node_modules")).expect("dir must be created");
+        std::fs::write(dir.join("node_modules").join("ignored.db"), b"nope")
+            .expect("db file must be written");
+
+        let outcome = DatabaseManager::execute_sqlite(
+            &sqlite_integration(&dir.to_string_lossy()),
+            DatabaseOperation::Status,
+        );
+
+        match outcome {
+            DatabaseOutcome::Success { output } => {
+                assert!(output.contains("app.db"), "got: {output}");
+                assert!(!output.contains("ignored.db"), "got: {output}");
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sqlite_status_without_a_file_explains_boot_behavior() {
+        let dir = sqlite_fixture("missing");
+
+        let outcome = DatabaseManager::execute_sqlite(
+            &sqlite_integration(&dir.to_string_lossy()),
+            DatabaseOperation::Status,
+        );
+
+        match outcome {
+            DatabaseOutcome::Error { message, .. } => {
+                assert!(message.contains("Migrations completed"), "got: {message}");
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sqlite_migrate_and_seed_point_at_the_backend() {
+        let integration = sqlite_integration(".");
+
+        for operation in [DatabaseOperation::Migrate, DatabaseOperation::Seed] {
+            match DatabaseManager::execute_sqlite(&integration, operation) {
+                DatabaseOutcome::NotImplemented { reason } => {
+                    assert!(reason.contains("backend"), "got: {reason}");
+                }
+                other => panic!("expected NotImplemented, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn sqlite_backup_copies_the_database_file() {
+        let dir = sqlite_fixture("backup");
+        std::fs::write(dir.join("app.db"), b"fake-sqlite").expect("db file must be written");
+
+        let outcome = DatabaseManager::execute_sqlite(
+            &sqlite_integration(&dir.to_string_lossy()),
+            DatabaseOperation::Backup,
+        );
+
+        match outcome {
+            DatabaseOutcome::Success { output } => {
+                assert!(output.contains("backed up to"), "got: {output}");
+                let backups: Vec<_> = std::fs::read_dir(&dir)
+                    .expect("dir must list")
+                    .flatten()
+                    .filter(|entry| {
+                        entry
+                            .file_name()
+                            .to_string_lossy()
+                            .starts_with("app.backup-")
+                    })
+                    .collect();
+                assert_eq!(backups.len(), 1);
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sqlite_reset_removes_the_database_file() {
+        let dir = sqlite_fixture("reset");
+        std::fs::write(dir.join("app.db"), b"fake-sqlite").expect("db file must be written");
+
+        let outcome = DatabaseManager::execute_sqlite(
+            &sqlite_integration(&dir.to_string_lossy()),
+            DatabaseOperation::Reset,
+        );
+
+        match outcome {
+            DatabaseOutcome::Success { output } => {
+                assert!(output.contains("restart the backend"), "got: {output}");
+                assert!(!dir.join("app.db").exists());
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -7,10 +7,11 @@
 //! Process ownership detection is cross-platform (Windows, Linux, macOS)
 //! and only reports verified ownership ("Pilot Prerequisite.md" section 17).
 
+#[cfg(target_os = "linux")]
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -27,11 +28,161 @@ pub const SEARCH_RANGE: u16 = 20;
 /// These helpers run on every status poll, so a visible window would flicker
 /// constantly while the GUI is open.
 #[cfg(windows)]
+#[allow(dead_code)]
 fn silent_command(program: &str) -> Command {
     use std::os::windows::process::CommandExt;
     let mut command = Command::new(program);
     command.creation_flags(0x0800_0000);
     command
+}
+
+#[cfg(windows)]
+mod win_net {
+    pub const AF_INET: u32 = 2;
+    pub const AF_INET6: u32 = 23;
+    pub const TCP_TABLE_OWNER_PID_ALL: u32 = 5;
+    pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct MIB_TCPROW_OWNER_PID {
+        pub dw_state: u32,
+        pub dw_local_addr: u32,
+        pub dw_local_port: u32,
+        pub dw_remote_addr: u32,
+        pub dw_remote_port: u32,
+        pub dw_owning_pid: u32,
+    }
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct MIB_TCP6ROW_OWNER_PID {
+        pub uc_local_addr: [u8; 16],
+        pub dw_local_scope_id: u32,
+        pub dw_local_port: u32,
+        pub uc_remote_addr: [u8; 16],
+        pub dw_remote_scope_id: u32,
+        pub dw_remote_port: u32,
+        pub dw_state: u32,
+        pub dw_owning_pid: u32,
+    }
+
+    #[link(name = "iphlpapi")]
+    unsafe extern "system" {
+        pub fn GetExtendedTcpTable(
+            p_tcp_table: *mut std::ffi::c_void,
+            pdw_size: *mut u32,
+            b_order: i32,
+            ul_af: u32,
+            table_class: u32,
+            reserved: u32,
+        ) -> u32;
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        pub fn OpenProcess(
+            dw_desired_access: u32,
+            b_inherit_handle: i32,
+            dw_process_id: u32,
+        ) -> *mut std::ffi::c_void;
+        pub fn CloseHandle(h_object: *mut std::ffi::c_void) -> i32;
+        pub fn QueryFullProcessImageNameW(
+            h_process: *mut std::ffi::c_void,
+            dw_flags: u32,
+            lp_exe_name: *mut u16,
+            lpdw_size: *mut u32,
+        ) -> i32;
+    }
+
+    pub fn find_tcp_owner(port: u16) -> Option<u32> {
+        if let Some(pid) = find_tcp4_owner(port) {
+            return Some(pid);
+        }
+        find_tcp6_owner(port)
+    }
+
+    fn find_tcp4_owner(port: u16) -> Option<u32> {
+        unsafe {
+            let mut size: u32 = 0;
+            let _ = GetExtendedTcpTable(
+                std::ptr::null_mut(),
+                &mut size,
+                0,
+                AF_INET,
+                TCP_TABLE_OWNER_PID_ALL,
+                0,
+            );
+            if size == 0 {
+                return None;
+            }
+
+            let mut buffer = vec![0u8; size as usize];
+            let ret = GetExtendedTcpTable(
+                buffer.as_mut_ptr() as *mut std::ffi::c_void,
+                &mut size,
+                0,
+                AF_INET,
+                TCP_TABLE_OWNER_PID_ALL,
+                0,
+            );
+            if ret != 0 {
+                return None;
+            }
+
+            let num_entries = *(buffer.as_ptr() as *const u32);
+            let rows = buffer.as_ptr().add(4) as *const MIB_TCPROW_OWNER_PID;
+            for i in 0..num_entries as usize {
+                let row = *rows.add(i);
+                let row_port = u16::from_be((row.dw_local_port & 0xFFFF) as u16);
+                if row_port == port && row.dw_owning_pid != 0 {
+                    return Some(row.dw_owning_pid);
+                }
+            }
+            None
+        }
+    }
+
+    fn find_tcp6_owner(port: u16) -> Option<u32> {
+        unsafe {
+            let mut size: u32 = 0;
+            let _ = GetExtendedTcpTable(
+                std::ptr::null_mut(),
+                &mut size,
+                0,
+                AF_INET6,
+                TCP_TABLE_OWNER_PID_ALL,
+                0,
+            );
+            if size == 0 {
+                return None;
+            }
+
+            let mut buffer = vec![0u8; size as usize];
+            let ret = GetExtendedTcpTable(
+                buffer.as_mut_ptr() as *mut std::ffi::c_void,
+                &mut size,
+                0,
+                AF_INET6,
+                TCP_TABLE_OWNER_PID_ALL,
+                0,
+            );
+            if ret != 0 {
+                return None;
+            }
+
+            let num_entries = *(buffer.as_ptr() as *const u32);
+            let rows = buffer.as_ptr().add(4) as *const MIB_TCP6ROW_OWNER_PID;
+            for i in 0..num_entries as usize {
+                let row = *rows.add(i);
+                let row_port = u16::from_be((row.dw_local_port & 0xFFFF) as u16);
+                if row_port == port && row.dw_owning_pid != 0 {
+                    return Some(row.dw_owning_pid);
+                }
+            }
+            None
+        }
+    }
 }
 
 /// Port status information
@@ -111,15 +262,27 @@ impl PortManager {
         Self
     }
 
-    /// Check if something is accepting TCP connections on the loopback interface
+    /// Check if something is accepting TCP connections on the loopback interface.
+    ///
+    /// Both IPv4 (`127.0.0.1`) and IPv6 (`::1`) loopback are probed: dev
+    /// servers such as Vite may listen on IPv6 only, and an IPv4-only probe
+    /// would wrongly report the port as free.
     pub fn is_listening(&self, port: u16) -> bool {
-        let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
-        TcpStream::connect_timeout(&address.into(), PROBE_TIMEOUT).is_ok()
+        let v4 = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
+        if TcpStream::connect_timeout(&v4.into(), PROBE_TIMEOUT).is_ok() {
+            return true;
+        }
+        let v6 = SocketAddrV6::new(Ipv6Addr::LOCALHOST, port, 0, 0);
+        TcpStream::connect_timeout(&v6.into(), PROBE_TIMEOUT).is_ok()
     }
 
-    /// Check if a port can be bound (is free for a new service)
+    /// Check if a port can be bound (is free for a new service).
+    ///
+    /// A port counts as free only when it is bindable on both IPv4 and IPv6
+    /// loopback: a server holding one family must block reuse of the port.
     pub fn is_bindable(&self, port: u16) -> bool {
         TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok()
+            && TcpListener::bind((Ipv6Addr::LOCALHOST, port)).is_ok()
     }
 
     /// Get the process owning a port (cross-platform)
@@ -142,87 +305,81 @@ impl PortManager {
         }
     }
 
-    /// Windows: Use netstat and tasklist
+    /// Windows: Native TCP table query via iphlpapi and process query via kernel32
     #[cfg(windows)]
     fn get_port_owner_windows(&self, port: u16) -> Option<ProcessOwner> {
-        let output = silent_command("cmd")
-            .args(["/C", &format!("netstat -ano | findstr :{}", port)])
-            .output()
-            .ok()?;
-
-        if !output.status.success() {
-            return None;
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let pid_regex = Regex::new(r"\s+(\d+)\s*$").ok()?;
-
-        for line in stdout.lines() {
-            if line.contains(&format!(":{}", port))
-                && (line.contains("TCP") || line.contains("UDP"))
-                && let Some(caps) = pid_regex.captures(line)
-                && let Ok(pid) = caps.get(1).unwrap().as_str().parse::<u32>()
-                && let Some(owner) = self.get_process_info_windows(pid)
-            {
-                return Some(owner);
-            }
-        }
-        None
+        let pid = win_net::find_tcp_owner(port)?;
+        self.get_process_info_windows(pid)
     }
 
     #[cfg(windows)]
     fn get_process_info_windows(&self, pid: u32) -> Option<ProcessOwner> {
-        let output = silent_command("cmd")
-            .args(["/C", &format!("tasklist /FI \"PID eq {}\" /FO CSV", pid)])
-            .output()
-            .ok()?;
-
-        if !output.status.success() {
+        if pid == 0 {
             return None;
         }
+        if pid == 4 {
+            return Some(ProcessOwner {
+                pid,
+                name: "System".to_string(),
+                command: "System".to_string(),
+                start_time: None,
+            });
+        }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines().skip(1) {
-            if let Some(name) = line.split(',').next() {
-                let name = name.trim_matches('"');
-                let cmd_output = silent_command("cmd")
-                    .args([
-                        "/C",
-                        &format!(
-                            "wmic process where ProcessId={} get CommandLine /format:list",
-                            pid
-                        ),
-                    ])
-                    .output()
-                    .ok()?;
-
-                let cmd_stdout = String::from_utf8_lossy(&cmd_output.stdout);
-                let command = cmd_stdout
-                    .lines()
-                    .find(|l| l.starts_with("CommandLine="))
-                    .map(|l| l["CommandLine=".len()..].to_string())
-                    .unwrap_or_default();
-
+        unsafe {
+            let handle = win_net::OpenProcess(win_net::PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle.is_null() {
                 return Some(ProcessOwner {
                     pid,
-                    name: name.to_string(),
-                    command,
+                    name: format!("process-{pid}"),
+                    command: String::new(),
                     start_time: None,
                 });
             }
+
+            let mut buffer = [0u16; 1024];
+            let mut size = buffer.len() as u32;
+            let success = win_net::QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut size);
+            win_net::CloseHandle(handle);
+
+            if success != 0 && size > 0 {
+                let full_path = String::from_utf16_lossy(&buffer[..size as usize]);
+                let name = std::path::Path::new(&full_path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| full_path.clone());
+                Some(ProcessOwner {
+                    pid,
+                    name,
+                    command: full_path,
+                    start_time: None,
+                })
+            } else {
+                Some(ProcessOwner {
+                    pid,
+                    name: format!("pid-{pid}"),
+                    command: String::new(),
+                    start_time: None,
+                })
+            }
         }
-        None
     }
 
     /// Linux: Use ss and /proc
     #[cfg(target_os = "linux")]
     fn get_port_owner_linux(&self, port: u16) -> Option<ProcessOwner> {
+        use std::sync::OnceLock;
+
+        static PID_REGEX: OnceLock<Regex> = OnceLock::new();
+        static COMM_REGEX: OnceLock<Regex> = OnceLock::new();
+
+        let pid_regex = PID_REGEX.get_or_init(|| Regex::new(r"pid=(\d+),?").expect("pid regex"));
+        let comm_regex = COMM_REGEX.get_or_init(|| Regex::new(r#"comm=\"([^\"]+)\""#).expect("comm regex"));
+
         let output = Command::new("ss").args(["-tlnp"]).output().ok()?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let port_pattern = format!(":{}", port);
-        let pid_regex = Regex::new(r"pid=(\d+),?").ok()?;
-        let comm_regex = Regex::new(r#"comm=\"([^\"]+)\""#).ok()?;
 
         for line in stdout.lines() {
             if line.contains(&port_pattern) {
@@ -376,7 +533,7 @@ impl PortChanger {
         files
     }
 
-    /// Replace port references in a file
+    /// Replace port references in a file using proper parsing for structured formats
     fn replace_port_in_file(
         file_path: &Path,
         from_port: u16,
@@ -386,24 +543,162 @@ impl PortChanger {
         let from_str = from_port.to_string();
         let to_str = to_port.to_string();
 
-        // Simple replacement: replace "port" with "new_port" but only when surrounded by
-        // non-digit characters (or start/end of string). We do this by iterating through
-        // the string and checking each occurrence.
+        let extension = file_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        let new_content = match extension.as_str() {
+            "json" => Self::replace_port_in_json(&content, &from_str, &to_str)?,
+            "yaml" | "yml" => Self::replace_port_in_yaml(&content, &from_str, &to_str)?,
+            "toml" => Self::replace_port_in_toml(&content, &from_str, &to_str)?,
+            _ => Self::replace_port_in_text(&content, &from_str, &to_str),
+        };
+
+        if new_content != content {
+            fs::write(file_path, new_content.as_bytes())?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Replace port in JSON content using serde_json
+    fn replace_port_in_json(content: &str, from: &str, to: &str) -> Result<String, std::io::Error> {
+        let mut value: serde_json::Value = serde_json::from_str(content)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        Self::replace_port_in_json_value(&mut value, from, to, None);
+        Ok(serde_json::to_string_pretty(&value)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?)
+    }
+
+    fn replace_port_in_json_value(value: &mut serde_json::Value, from: &str, to: &str, key: Option<&str>) {
+        match value {
+            serde_json::Value::String(s) => {
+                // Only replace if the key suggests it's a port, or if the value is a pure number
+                if Self::is_port_context(key, s) && s == from {
+                    *s = to.to_string();
+                }
+            }
+            serde_json::Value::Number(n) => {
+                // Replace numeric port values
+                if n.as_u64() == Some(from.parse().unwrap_or(0)) {
+                    *value = serde_json::Value::Number(to.parse().unwrap());
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for item in arr {
+                    Self::replace_port_in_json_value(item, from, to, None);
+                }
+            }
+            serde_json::Value::Object(obj) => {
+                for (k, v) in obj.iter_mut() {
+                    Self::replace_port_in_json_value(v, from, to, Some(k));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Replace port in YAML content using serde_yaml
+    fn replace_port_in_yaml(content: &str, from: &str, to: &str) -> Result<String, std::io::Error> {
+        let mut value: serde_yaml::Value = serde_yaml::from_str(content)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        Self::replace_port_in_yaml_value(&mut value, from, to, None);
+        Ok(serde_yaml::to_string(&value)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?)
+    }
+
+    fn replace_port_in_yaml_value(value: &mut serde_yaml::Value, from: &str, to: &str, key: Option<&str>) {
+        match value {
+            serde_yaml::Value::String(s) => {
+                if Self::is_port_context(key, s) && s == from {
+                    *s = to.to_string();
+                }
+            }
+            serde_yaml::Value::Number(n) => {
+                if n.as_u64() == Some(from.parse().unwrap_or(0)) {
+                    *value = serde_yaml::Value::Number(to.parse().unwrap());
+                }
+            }
+            serde_yaml::Value::Sequence(seq) => {
+                for item in seq {
+                    Self::replace_port_in_yaml_value(item, from, to, None);
+                }
+            }
+            serde_yaml::Value::Mapping(map) => {
+                for (k, v) in map.iter_mut() {
+                    let key_str = k.as_str().unwrap_or("");
+                    Self::replace_port_in_yaml_value(v, from, to, Some(key_str));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Replace port in TOML content using toml
+    fn replace_port_in_toml(content: &str, from: &str, to: &str) -> Result<String, std::io::Error> {
+        let mut value: toml::Value = content.parse()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        Self::replace_port_in_toml_value(&mut value, from, to, None);
+        Ok(value.to_string())
+    }
+
+    fn replace_port_in_toml_value(value: &mut toml::Value, from: &str, to: &str, key: Option<&str>) {
+        match value {
+            toml::Value::String(s) => {
+                if Self::is_port_context(key, s) && s == from {
+                    *s = to.to_string();
+                }
+            }
+            toml::Value::Integer(n) => {
+                if *n as u64 == from.parse().unwrap_or(0) {
+                    *value = toml::Value::Integer(to.parse::<i64>().unwrap());
+                }
+            }
+            toml::Value::Array(arr) => {
+                for item in arr {
+                    Self::replace_port_in_toml_value(item, from, to, None);
+                }
+            }
+            toml::Value::Table(table) => {
+                for (k, v) in table.iter_mut() {
+                    Self::replace_port_in_toml_value(v, from, to, Some(k));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Check if a key/value pair is likely a port configuration
+    fn is_port_context(key: Option<&str>, value: &str) -> bool {
+        if let Some(key) = key {
+            let key_lower = key.to_lowercase();
+            // Common port-related keys
+            if key_lower.contains("port") {
+                return true;
+            }
+        }
+        // Also replace if the value is a pure number (likely a port number)
+        value.parse::<u16>().is_ok()
+    }
+
+    /// Replace port in plain text files (fallback for .env, config files, etc.)
+    fn replace_port_in_text(content: &str, from: &str, to: &str) -> String {
         let mut result = String::with_capacity(content.len());
         let mut i = 0;
         let bytes = content.as_bytes();
-        let from_bytes = from_str.as_bytes();
+        let from_bytes = from.as_bytes();
         let from_len = from_bytes.len();
 
         while i < bytes.len() {
-            // Check if the port number matches at this position
             if i + from_len <= bytes.len() && &bytes[i..i + from_len] == from_bytes {
-                // Check if surrounded by non-digits (or start/end)
                 let before_ok = i == 0 || !bytes[i - 1].is_ascii_digit();
                 let after_ok = i + from_len >= bytes.len() || !bytes[i + from_len].is_ascii_digit();
 
                 if before_ok && after_ok {
-                    result.push_str(&to_str);
+                    result.push_str(to);
                     i += from_len;
                     continue;
                 }
@@ -412,14 +707,7 @@ impl PortChanger {
             i += 1;
         }
 
-        let new_content = result;
-
-        if new_content != content {
-            fs::write(file_path, new_content.as_bytes())?;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        result
     }
 
     /// Change a port across all relevant files in a project
@@ -516,15 +804,19 @@ impl Default for PortManagerWithChange {
     }
 }
 
-/// Whether something is accepting TCP connections on the loopback interface
+/// Whether something is accepting TCP connections on the loopback interface.
+///
+/// Probes both IPv4 (`127.0.0.1`) and IPv6 (`::1`): dev servers such as Vite
+/// may listen on IPv6 only, and an IPv4-only probe would miss them.
 pub fn is_listening(port: u16) -> bool {
-    let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
-    TcpStream::connect_timeout(&address.into(), PROBE_TIMEOUT).is_ok()
+    PortManager::new().is_listening(port)
 }
 
-/// Whether a port can be bound, i.e. it is free for a new service
+/// Whether a port can be bound, i.e. it is free for a new service.
+///
+/// A port counts as free only when bindable on both IPv4 and IPv6 loopback.
 pub fn is_bindable(port: u16) -> bool {
-    TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok()
+    PortManager::new().is_bindable(port)
 }
 
 /// Inspect the current state of a port (legacy function for compatibility)
@@ -584,8 +876,24 @@ mod tests {
 
         assert_eq!(status.port, port);
         assert!(!status.available);
-        assert!(status.pid.is_none(), "ownership must not be claimed");
-        assert!(status.process.is_none());
+        assert_eq!(status.pid, Some(std::process::id()));
+        assert!(status.process.is_some());
+    }
+
+    #[test]
+    fn an_ipv6_only_listener_is_detected() {
+        let _lock = port_lock();
+
+        let listener = match TcpListener::bind((Ipv6Addr::LOCALHOST, 0)) {
+            Ok(listener) => listener,
+            Err(_) => return, // No IPv6 loopback on this machine; nothing to verify.
+        };
+        let port = listener.local_addr().expect("must have an address").port();
+
+        // An IPv4-only probe would miss this; the dual-stack probe must not.
+        assert!(is_listening(port));
+        assert!(!is_bindable(port));
+        assert!(!inspect_port(port).available);
     }
 
     #[test]
@@ -622,10 +930,16 @@ mod tests {
 
     #[test]
     fn changing_a_port_is_reported_as_changed() {
+        let temp_dir = std::env::temp_dir().join(format!("port-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).expect("temp dir must be created");
+        // Create a package.json with port 3000
+        fs::write(temp_dir.join("package.json"), r#"{"scripts": {"dev": "vite --port 3000"}}"#).expect("file must be written");
+
         let result = execute(PortOperation::ChangePort {
             from: 3000,
             to: 3100,
-            project_dir: ".".to_string(),
+            project_dir: temp_dir.to_string_lossy().to_string(),
         });
         match result {
             PortOutcome::Changed {
@@ -635,10 +949,12 @@ mod tests {
             } => {
                 assert_eq!(from, 3000);
                 assert_eq!(to, 3100);
-                assert_eq!(modified_files, Vec::<String>::new());
+                assert_eq!(modified_files, vec!["package.json".to_string()]);
             }
             other => panic!("expected Changed, got {:?}", other),
         }
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 
     #[test]

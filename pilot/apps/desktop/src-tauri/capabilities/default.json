@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default capability for the OpsPilot main window. Custom application commands are always allowed; this grants the core APIs the shell needs.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:default"]
 }

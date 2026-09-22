@@ -82,72 +82,90 @@ pub fn build_startup_plan(model: &ProjectModel, project_path: &str) -> StartupPl
         warnings: Vec::new(),
     };
 
-    let run = model
-        .commands
-        .iter()
-        .find(|command| is_run_command(&command.name))
-        .map(|command| command.command.clone());
+    let frontend_cmd_info = if model.frontend.is_some() {
+        model
+            .commands
+            .iter()
+            .find(|c| is_frontend_command(&c.name))
+            .or_else(|| {
+                model
+                    .commands
+                    .iter()
+                    .find(|c| is_run_command(&c.name))
+            })
+    } else {
+        None
+    };
 
-    let backend_framework = model
-        .backend
-        .as_ref()
-        .map(|backend| backend.framework.as_str());
+    let backend_cmd_info = if model.backend.is_some() {
+        model
+            .commands
+            .iter()
+            .find(|c| is_backend_command(&c.name) || c.source.contains("manage.py"))
+            .or_else(|| {
+                model
+                    .commands
+                    .iter()
+                    .find(|c| {
+                        is_run_command(&c.name)
+                            && (model.frontend.is_none()
+                                || Some(&c.command)
+                                    != frontend_cmd_info.map(|i| &i.command))
+                    })
+            })
+    } else {
+        None
+    };
 
-    match (model.frontend.is_some(), backend_framework, run.as_deref()) {
-        (true, Some(_), Some(command)) => {
-            // A full-stack Node.js app serves backend and frontend from one server.
+    if model.frontend.is_some() {
+        if let Some(info) = frontend_cmd_info {
+            let work_dir = step_working_dir(project_path, Some(info));
             plan.steps
-                .push(StartupStep::new("frontend", command, project_path));
-            plan.warnings.push(format!(
-                "the backend is served by the same process ({command}), which is why it has no separate step"
-            ));
-        }
-        (true, _, Some(command)) => {
-            plan.steps
-                .push(StartupStep::new("frontend", command, project_path));
-        }
-        (false, Some("django"), Some(command)) => {
-            plan.steps
-                .push(StartupStep::new("backend", command, project_path));
-        }
-        (false, Some(_), Some(command)) => {
-            // Any other backend framework (express, fastify, koa, nestjs,
-            // fastapi, flask, ...) with a declared run command gets a
-            // backend step. Previously only django was handled here and
-            // every other backend silently produced no step, so Start
-            // failed with "No startup step found".
-            plan.steps
-                .push(StartupStep::new("backend", command, project_path));
-        }
-        (false, None, Some(command)) => {
-            // A declared run command (dev/start/serve) exists but no
-            // frontend/backend framework was detected (e.g. a plain
-            // package.json with scripts and no known framework
-            // dependency). Expose it as a generic "app" step instead of
-            // silently dropping it, so Start actually does something.
-            plan.steps
-                .push(StartupStep::new("app", command, project_path));
-        }
-        (false, Some(framework), _) if model.backend.is_some() => {
-            plan.warnings.push(format!(
-                "no start command was declared for the {framework} backend; add it explicitly"
-            ));
-        }
-        (true, _, None) => {
+                .push(StartupStep::new("frontend", info.command.clone(), work_dir));
+        } else {
             plan.warnings.push(
                 "package.json declares no dev or start script, so nothing can be started automatically"
                     .to_string(),
             );
         }
-        _ => {
-            // No frontend, no backend and no declared run command.
-            // Say so explicitly instead of silently producing an empty plan.
-            if plan.steps.is_empty() {
-                plan.warnings.push(
-                    "no startable service was detected; declare a dev/start/serve command to enable Start"
-                        .to_string(),
-                );
-            }
+    }
+
+    if model.backend.is_some() {
+        if let Some(info) = backend_cmd_info {
+            let work_dir = step_working_dir(project_path, Some(info));
+            plan.steps
+                .push(StartupStep::new("backend", info.command.clone(), work_dir));
+        } else if model.frontend.is_some() && frontend_cmd_info.is_some() {
+            let cmd = frontend_cmd_info.map(|i| i.command.as_str()).unwrap_or_default();
+            plan.warnings.push(format!(
+                "the backend is served by the same process ({cmd}), which is why it has no separate step"
+            ));
+        } else {
+            let fw = model
+                .backend
+                .as_ref()
+                .map(|b| b.framework.as_str())
+                .unwrap_or("backend");
+            plan.warnings.push(format!(
+                "no start command was declared for the {fw} backend; add it explicitly"
+            ));
+        }
+    }
+
+    if model.frontend.is_none() && model.backend.is_none() {
+        let app_cmd = model
+            .commands
+            .iter()
+            .find(|c| is_run_command(&c.name))
+            .map(|c| c.command.clone());
+
+        if let Some(ref cmd) = app_cmd {
+            plan.steps.push(StartupStep::new("app", cmd.clone(), project_path));
+        } else {
+            plan.warnings.push(
+                "no startable service was detected; declare a dev/start/serve command to enable Start"
+                    .to_string(),
+            );
         }
     }
 
@@ -179,6 +197,32 @@ pub fn build_startup_plan(model: &ProjectModel, project_path: &str) -> StartupPl
 /// Whether a declared command starts the project
 fn is_run_command(name: &str) -> bool {
     matches!(name, "dev" | "start" | "serve")
+}
+
+fn is_frontend_command(name: &str) -> bool {
+    matches!(
+        name,
+        "dev:frontend" | "frontend" | "dev:client" | "client" | "dev:web" | "web" | "dev:ui" | "ui"
+    )
+}
+
+fn is_backend_command(name: &str) -> bool {
+    matches!(
+        name,
+        "dev:backend" | "backend" | "dev:server" | "server" | "dev:api" | "api" | "runserver"
+    )
+}
+
+fn step_working_dir(project_path: &str, command_info: Option<&pilot_core::CommandInfo>) -> String {
+    if let Some(info) = command_info {
+        if let Some((dir, _)) = info.source.split_once('/') {
+            let path = std::path::Path::new(project_path).join(dir);
+            if path.is_dir() {
+                return path.to_string_lossy().to_string();
+            }
+        }
+    }
+    project_path.to_string()
 }
 
 /// Which runtime a command line needs, inferred from its first word
@@ -302,6 +346,26 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("backend"))
         );
+    }
+
+    #[test]
+    fn a_project_with_separate_frontend_and_backend_commands_gets_both_steps() {
+        let mut model = node_model("npm run dev");
+        model.backend = Some(BackendInfo::new("django", 8000));
+        model.commands.push(CommandInfo::new(
+            "backend",
+            "python manage.py runserver",
+            "manage.py",
+        ));
+
+        let plan = build_startup_plan(&model, ".");
+
+        assert_eq!(plan.steps.len(), 2);
+        assert_eq!(plan.steps[0].service, "frontend");
+        assert_eq!(plan.steps[0].command, "npm run dev");
+        assert_eq!(plan.steps[1].service, "backend");
+        assert_eq!(plan.steps[1].command, "python manage.py runserver");
+        assert!(plan.executable());
     }
 
     #[test]
