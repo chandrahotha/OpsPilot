@@ -72,6 +72,16 @@ impl Default for OperationHistory {
     }
 }
 
+impl Clone for OperationHistory {
+    fn clone(&self) -> Self {
+        let entries = self.lock();
+        OperationHistory {
+            capacity: self.capacity,
+            entries: Mutex::new(entries.clone()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

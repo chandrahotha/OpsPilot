@@ -196,29 +196,78 @@ pub fn build_startup_plan(model: &ProjectModel, project_path: &str) -> StartupPl
 
 /// Whether a declared command starts the project
 fn is_run_command(name: &str) -> bool {
-    matches!(name, "dev" | "start" | "serve")
+    matches!(
+        name,
+        "dev" | "start" | "serve" | "run" | "app" | "preview" | "watch" | "develop"
+    ) || name.starts_with("dev:")
+        || name.starts_with("start:")
+        || name.starts_with("serve:")
+        || name.starts_with("run:")
 }
 
 fn is_frontend_command(name: &str) -> bool {
     matches!(
         name,
-        "dev:frontend" | "frontend" | "dev:client" | "client" | "dev:web" | "web" | "dev:ui" | "ui"
-    )
+        "dev:frontend"
+            | "start:frontend"
+            | "serve:frontend"
+            | "frontend"
+            | "dev:client"
+            | "start:client"
+            | "serve:client"
+            | "client"
+            | "dev:web"
+            | "start:web"
+            | "serve:web"
+            | "web"
+            | "dev:ui"
+            | "start:ui"
+            | "serve:ui"
+            | "ui"
+            | "dev:app"
+            | "start:app"
+            | "app"
+    ) || name.ends_with(":frontend")
+        || name.ends_with(":client")
+        || name.ends_with(":web")
+        || name.ends_with(":ui")
 }
 
 fn is_backend_command(name: &str) -> bool {
+    // Named commands (explicit monorepo backend commands)
     matches!(
         name,
-        "dev:backend" | "backend" | "dev:server" | "server" | "dev:api" | "api" | "runserver"
-    )
+        "dev:backend"
+            | "start:backend"
+            | "serve:backend"
+            | "backend"
+            | "dev:server"
+            | "start:server"
+            | "serve:server"
+            | "server"
+            | "dev:api"
+            | "start:api"
+            | "serve:api"
+            | "api"
+            | "runserver"
+    ) || name.ends_with(":backend")
+        || name.ends_with(":server")
+        || name.ends_with(":api")
 }
 
 fn step_working_dir(project_path: &str, command_info: Option<&pilot_core::CommandInfo>) -> String {
     if let Some(info) = command_info {
-        if let Some((dir, _)) = info.source.split_once('/') {
-            let path = std::path::Path::new(project_path).join(dir);
-            if path.is_dir() {
-                return path.to_string_lossy().to_string();
+        // `source` is like "apps/web/package.json scripts" or "backend/package.json scripts".
+        // Extract the directory portion: everything before the last path segment that ends in
+        // a known config file, so that "apps/web/package.json" → "apps/web" (not just "apps").
+        let source_file = info.source.split_whitespace().next().unwrap_or("");
+        if let Some(parent) = std::path::Path::new(source_file).parent() {
+            let parent_str = parent.to_string_lossy();
+            if !parent_str.is_empty() && parent_str != "." {
+                let path = std::path::Path::new(project_path).join(parent_str.as_ref());
+                if path.is_dir() {
+                    return path.to_string_lossy().to_string();
+                }
             }
         }
     }
@@ -523,5 +572,28 @@ mod tests {
         let model = node_model("npm run dev");
 
         assert!(command_is_declared(&model, "app", "npm run dev"));
+    }
+
+    #[test]
+    fn custom_script_prefixes_and_suffixes_are_recognized() {
+        let mut model = ProjectModel::new("demo", ".");
+        model.frontend = Some(FrontendInfo::new("vite", 5173));
+        model.backend = Some(BackendInfo::new("express", 4000));
+        model.commands.push(CommandInfo::new(
+            "start:frontend",
+            "npm run start:frontend",
+            "package.json scripts",
+        ));
+        model.commands.push(CommandInfo::new(
+            "start:api",
+            "npm run start:api",
+            "package.json scripts",
+        ));
+
+        let plan = build_startup_plan(&model, ".");
+
+        assert_eq!(plan.steps.len(), 2);
+        assert_eq!(plan.steps[0].service, "frontend");
+        assert_eq!(plan.steps[1].service, "backend");
     }
 }

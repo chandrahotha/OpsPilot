@@ -61,32 +61,30 @@ impl Detector for NodeDetector {
 
         // Check for explicit packageManager field in package.json (standard field)
         let manifest_for_pm = read_text(project_path, "package.json");
-        if let Some(manifest) = &manifest_for_pm {
-            if let Ok(json) = serde_json::from_str::<Value>(manifest) {
-                if let Some(pm) = json.get("packageManager").and_then(|v| v.as_str()) {
-                    if pm.starts_with("pnpm@") {
-                        package_manager = "pnpm";
-                    } else if pm.starts_with("yarn@") {
-                        package_manager = "yarn";
-                    } else if pm.starts_with("bun@") {
-                        package_manager = "bun";
-                    } else if pm.starts_with("npm@") {
-                        package_manager = "npm";
-                    }
-                    evidence.push(format!("packageManager field: {pm}"));
-                }
+        if let Some(manifest) = &manifest_for_pm
+            && let Ok(json) = serde_json::from_str::<Value>(manifest)
+            && let Some(pm) = json.get("packageManager").and_then(|v| v.as_str())
+        {
+            if pm.starts_with("pnpm@") {
+                package_manager = "pnpm";
+            } else if pm.starts_with("yarn@") {
+                package_manager = "yarn";
+            } else if pm.starts_with("bun@") {
+                package_manager = "bun";
+            } else if pm.starts_with("npm@") {
+                package_manager = "npm";
             }
+            evidence.push(format!("packageManager field: {pm}"));
         }
 
         // Fall back to lockfile detection if no packageManager field
-        if package_manager == "npm" {
-            if let Some((file, manager)) = LOCKFILES
+        if package_manager == "npm"
+            && let Some((file, manager)) = LOCKFILES
                 .iter()
                 .find(|(file, _)| exists(project_path, file))
-            {
-                package_manager = manager;
-                evidence.push(format!("{file} ({manager})"));
-            }
+        {
+            package_manager = manager;
+            evidence.push(format!("{file} ({manager})"));
         }
 
         let Some(manifest) = read_text(project_path, "package.json") else {
@@ -147,8 +145,19 @@ fn collect_commands(
         return;
     };
 
-    for script in RUN_SCRIPTS.iter().chain(SUPPORT_SCRIPTS.iter()) {
-        let Some(body) = scripts.get(*script).and_then(Value::as_str) else {
+    // First process standard run and support scripts in precedence order
+    let standard_keys: Vec<&str> = RUN_SCRIPTS.iter().chain(SUPPORT_SCRIPTS.iter()).copied().collect();
+
+    // Collect all script names, starting with standard ones, then all other declared scripts
+    let mut all_script_keys: Vec<&str> = standard_keys.clone();
+    for key in scripts.keys() {
+        if !all_script_keys.contains(&key.as_str()) {
+            all_script_keys.push(key.as_str());
+        }
+    }
+
+    for script in all_script_keys {
+        let Some(body) = scripts.get(script).and_then(Value::as_str) else {
             continue;
         };
 
@@ -158,9 +167,9 @@ fn collect_commands(
 
         let command = run_command(package_manager, script);
 
-        if !model.commands.iter().any(|known| known.name == *script) {
+        if !model.commands.iter().any(|known| known.name == script) {
             model.commands.push(CommandInfo::new(
-                *script,
+                script,
                 command.clone(),
                 "package.json scripts",
             ));
@@ -236,10 +245,10 @@ fn port_from_env(project_path: &str) -> Option<u16> {
                         .chars()
                         .take_while(|c| c.is_ascii_digit())
                         .collect();
-                    if let Ok(port) = digits.parse::<u16>() {
-                        if port != 0 {
-                            return Some(port);
-                        }
+                    if let Ok(port) = digits.parse::<u16>()
+                        && port != 0
+                    {
+                        return Some(port);
                     }
                 }
             }
@@ -267,10 +276,10 @@ fn port_from_vite_config(project_path: &str) -> Option<u16> {
                     .chars()
                     .take_while(|c| c.is_ascii_digit())
                     .collect();
-                if let Ok(port) = digits.parse::<u16>() {
-                    if port != 0 {
-                        return Some(port);
-                    }
+                if let Ok(port) = digits.parse::<u16>()
+                    && port != 0
+                {
+                    return Some(port);
                 }
             }
         }
@@ -436,7 +445,7 @@ mod tests {
             .map(|command| command.name.as_str())
             .collect();
 
-        assert_eq!(names, vec!["dev", "build"]);
+        assert_eq!(names, vec!["dev", "build", "deploy"]);
         assert_eq!(model.commands[0].command, "npm run dev");
         assert_eq!(model.commands[0].source, "package.json scripts");
         assert!(evidence.iter().any(|line| line.contains("npm run dev")));

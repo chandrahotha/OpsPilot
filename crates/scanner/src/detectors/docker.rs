@@ -73,16 +73,16 @@ impl Detector for DockerComposeDetector {
         for file in compose_files {
             evidence.push(format!("{file} (docker compose)"));
 
-            if model.database.is_none() {
-                if let Some(compose) = read_text(project_path, file) {
-                    let lowered = compose.to_lowercase();
-                    if let Some((image, database, port)) = DATABASE_IMAGES
-                        .iter()
-                        .find(|(image, ..)| lowered.contains(image))
-                    {
-                        evidence.push(format!("compose service image {image} on port {port}"));
-                        model.database = Some(DatabaseInfo::new(*database, *port));
-                    }
+            if model.database.is_none()
+                && let Some(compose) = read_text(project_path, file)
+            {
+                let lowered = compose.to_lowercase();
+                if let Some((image, database, port)) = DATABASE_IMAGES
+                    .iter()
+                    .find(|(image, ..)| lowered.contains(image))
+                {
+                    evidence.push(format!("compose service image {image} on port {port}"));
+                    model.database = Some(DatabaseInfo::new(*database, *port));
                 }
             }
         }

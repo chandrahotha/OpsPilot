@@ -85,6 +85,26 @@ impl Detector for PythonDetector {
             if *framework == "django" {
                 model.orm = Some(OrmInfo::new("django"));
             }
+
+            let runner_cmd = match *framework {
+                "fastapi" => {
+                    if exists(project_path, "app/main.py") {
+                        Some("uvicorn app.main:app --reload")
+                    } else {
+                        Some("uvicorn main:app --reload")
+                    }
+                }
+                "flask" => Some("flask run"),
+                _ => None,
+            };
+            if let Some(cmd) = runner_cmd
+                && !model.commands.iter().any(|known| known.name == "dev")
+            {
+                model
+                    .commands
+                    .push(CommandInfo::new("dev", cmd, format!("{needle} (python)")));
+                evidence.push(format!("dev command `{cmd}` ({needle})"));
+            }
         }
 
         if model.database.is_none()

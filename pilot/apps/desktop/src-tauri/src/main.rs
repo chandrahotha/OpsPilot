@@ -19,7 +19,7 @@ use pilot_docker::DockerOperation;
 use pilot_docker::{DockerOutcome, compose_down, compose_up, execute as execute_docker};
 use pilot_process_manager::{
     LocalProcessManager, LogEntry, ProcessManager, ProcessOutcome, ProcessRequest, ProcessState,
-    build_startup_plan, validate_plan_ports, validate_step,
+    StartupStep, build_startup_plan, validate_plan_ports, validate_step,
 };
 use pilot_scanner::scan_project;
 use status::{ServiceStatus, build_status};
@@ -59,7 +59,7 @@ fn resolve_project_path(path: Option<String>) -> Result<String, String> {
 }
 
 /// Normalize paths for case-insensitive, slash-insensitive, canonical comparisons.
-pub fn normalize_path(path: &str) -> String {
+pub(crate) fn normalize_path(path: &str) -> String {
     let p = dunce::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
     p.to_string_lossy()
         .replace('\\', "/")
@@ -68,7 +68,7 @@ pub fn normalize_path(path: &str) -> String {
 }
 
 /// Check if a service's working directory matches or is a subfolder of the project directory.
-pub fn path_belongs_to_project(service_dir: &str, project_dir: &str) -> bool {
+pub(crate) fn path_belongs_to_project(service_dir: &str, project_dir: &str) -> bool {
     let s = normalize_path(service_dir);
     let p = normalize_path(project_dir);
     s == p || s.starts_with(&format!("{p}/"))
@@ -147,23 +147,25 @@ fn start_project(path: Option<String>, service: String) -> Result<String, String
         .cloned()
         .unwrap_or_else(|| ProjectModel::new(pilot_scanner::project_name_from_path(&path), &path));
     let plan = build_startup_plan(&model, &path);
-    let step = plan
-        .steps
-        .iter()
-        .find(|s| s.service == service)
-        .ok_or_else(|| {
-            let mut message = format!("No startup step found for service '{service}'");
-            if plan.steps.is_empty() {
-                message.push_str("; the startup plan has no executable steps");
-            } else {
-                let available: Vec<&str> = plan.steps.iter().map(|s| s.service.as_str()).collect();
-                message.push_str(&format!("; available services: {}", available.join(", ")));
-            }
-            if !plan.warnings.is_empty() {
-                message.push_str(&format!("; plan notes: {}", plan.warnings.join(" | ")));
-            }
-            message
-        })?;
+    let step_storage;
+    let step = if let Some(s) = plan.steps.iter().find(|s| s.service == service) {
+        s
+    } else if let Some(cmd) = model.commands.iter().find(|c| c.name == service) {
+        step_storage = StartupStep::new(&service, &cmd.command, &path);
+        &step_storage
+    } else {
+        let mut message = format!("No startup step found for service '{service}'");
+        if plan.steps.is_empty() {
+            message.push_str("; the startup plan has no executable steps");
+        } else {
+            let available: Vec<&str> = plan.steps.iter().map(|s| s.service.as_str()).collect();
+            message.push_str(&format!("; available services: {}", available.join(", ")));
+        }
+        if !plan.warnings.is_empty() {
+            message.push_str(&format!("; plan notes: {}", plan.warnings.join(" | ")));
+        }
+        return Err(message);
+    };
     let blockers = validate_step(step);
     if !blockers.is_empty() {
         return Err(format!(
@@ -376,12 +378,16 @@ fn stop_external_service(path: Option<String>, service: String) -> Result<String
     // If Pilot actually tracks this PID (state said external, but the user
     // started a same-named service through Pilot since), stop it gracefully
     // through the process manager instead of a force-kill.
+    // Also check descendant PIDs: cmd.exe → npm → node.exe means the root PID
+    // differs from the port-holder PID, so we must check the whole tree.
     let manager = get_process_manager();
-    if let Some(tracked) = manager
+    let pilot_owned = manager
         .list()
         .into_iter()
         .find(|snapshot| snapshot.state == ProcessState::Running && snapshot.pid == Some(pid))
-    {
+        .or_else(|| manager.any_contains_pid(pid));
+
+    if let Some(tracked) = pilot_owned {
         return match manager.stop(&tracked.label) {
             ProcessOutcome::Stopped(stopped) => Ok(format!(
                 "stopped {} (Pilot-tracked, {})",
@@ -577,11 +583,54 @@ fn database_integration_for(
         })
     });
 
+    // Read env vars from .env and .env.local so migration tools (Prisma, Alembic, etc.)
+    // can pick up DATABASE_URL and similar credentials without requiring the user to
+    // manually set them. Only the project's own directory is consulted; global env is
+    // not touched. Lines that cannot be parsed are silently skipped.
+    let mut env = HashMap::new();
+    for env_file in [".env", ".env.local", ".env.development"] {
+        let env_path = std::path::Path::new(path).join(env_file);
+        if let Ok(content) = std::fs::read_to_string(&env_path) {
+            for line in content.lines() {
+                let line = line.trim();
+                // Skip comments and blank lines
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                if let Some((key, value)) = line.split_once('=') {
+                    let key = key.trim().to_string();
+                    // Only pass database-related and generic connection env vars;
+                    // never forward secrets unrelated to the operation.
+                    if key == "DATABASE_URL"
+                        || key == "DB_URL"
+                        || key == "DB_HOST"
+                        || key == "DB_PORT"
+                        || key == "DB_NAME"
+                        || key == "DB_USER"
+                        || key == "DB_PASSWORD"
+                        || key == "POSTGRES_URL"
+                        || key == "MYSQL_URL"
+                        || key == "MONGO_URL"
+                        || key.starts_with("DJANGO_")
+                        || key == "FLASK_ENV"
+                    {
+                        let value = value
+                            .trim()
+                            .trim_matches('"')
+                            .trim_matches('\'')
+                            .to_string();
+                        env.entry(key).or_insert(value);
+                    }
+                }
+            }
+        }
+    }
+
     Ok(DatabaseIntegration {
         integration_type,
         project_dir: path.to_string(),
         database,
-        env: HashMap::new(),
+        env,
     })
 }
 
@@ -619,15 +668,22 @@ fn database_operation(
 }
 
 /// Captured stdout/stderr lines for a service started by Pilot.
+/// Default number of log lines returned when the caller does not supply a limit.
+///
+/// Kept in sync with LOG_CAPACITY from the process-manager crate. If that
+/// capacity changes, update this value to maintain a sensible default fraction.
+const DEFAULT_LOG_LIMIT: usize = 200;
+
+/// Return the captured log lines for a running or recently stopped service.
 ///
 /// Returns an empty list when the service was never started by Pilot.
-/// `limit` caps the number of trailing lines (defaults to 200).
+/// `limit` caps the number of trailing lines (defaults to [`DEFAULT_LOG_LIMIT`]).
 #[command]
 fn get_service_logs(service: String, limit: Option<usize>) -> Result<Vec<LogEntry>, String> {
     let manager = get_process_manager();
     Ok(manager
         .log_buffer(&service)
-        .map(|buffer| buffer.snapshot(limit.or(Some(200))))
+        .map(|buffer| buffer.snapshot(limit.or(Some(DEFAULT_LOG_LIMIT))))
         .unwrap_or_default())
 }
 

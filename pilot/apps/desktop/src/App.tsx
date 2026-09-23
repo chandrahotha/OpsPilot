@@ -286,6 +286,36 @@ function App() {
       ? `http://localhost:${frontendService.port}`
       : null;
 
+  const handleDockerComposeUp = async () => {
+    pushEvent('Running docker compose up', 'info');
+    try {
+      const outcome = await api.dockerCompose(currentPath, 'up');
+      const summary = api.describeDockerOutcome(outcome);
+      setMessage(summary);
+      pushEvent(summary, 'unavailable' in outcome || 'error' in outcome ? 'warning' : 'success');
+      void refreshStatus();
+    } catch (err) {
+      const text = toMessage(err);
+      setMessage(text);
+      pushEvent(text, 'error');
+    }
+  };
+
+  const handleDockerComposeDown = async () => {
+    pushEvent('Running docker compose down', 'info');
+    try {
+      const outcome = await api.dockerCompose(currentPath, 'down');
+      const summary = api.describeDockerOutcome(outcome);
+      setMessage(summary);
+      pushEvent(summary, 'unavailable' in outcome || 'error' in outcome ? 'warning' : 'success');
+      void refreshStatus();
+    } catch (err) {
+      const text = toMessage(err);
+      setMessage(text);
+      pushEvent(text, 'error');
+    }
+  };
+
   const overallStatus: OverallStatus = (() => {
     if (!detected) {
       return 'NO PROJECT';
@@ -421,6 +451,8 @@ function App() {
             onOpenFrontend={() => void openFrontend()}
             onEvent={pushEvent}
             onRunDiagnostics={() => void runDiagnostics()}
+            onDockerComposeUp={() => void handleDockerComposeUp()}
+            onDockerComposeDown={() => void handleDockerComposeDown()}
           />
         ) : (
           <div className='placeholder'>

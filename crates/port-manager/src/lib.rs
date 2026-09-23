@@ -379,10 +379,11 @@ impl PortManager {
         let output = Command::new("ss").args(["-tlnp"]).output().ok()?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let port_pattern = format!(":{}", port);
-
+        let port_pattern_space = format!(":{} ", port);
+        let port_pattern_tab = format!(":\t{}", port);
+        // Match port as a full token: ":3000 " avoids ":30000" false positives.
         for line in stdout.lines() {
-            if line.contains(&port_pattern) {
+            if line.contains(&port_pattern_space) || line.ends_with(&format!(":{port}")) || line.contains(&port_pattern_tab) {
                 let pid = pid_regex
                     .captures(line)
                     .and_then(|c| c.get(1))
@@ -569,8 +570,8 @@ impl PortChanger {
         let mut value: serde_json::Value = serde_json::from_str(content)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         Self::replace_port_in_json_value(&mut value, from, to, None);
-        Ok(serde_json::to_string_pretty(&value)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?)
+        serde_json::to_string_pretty(&value)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
     fn replace_port_in_json_value(value: &mut serde_json::Value, from: &str, to: &str, key: Option<&str>) {
@@ -606,8 +607,8 @@ impl PortChanger {
         let mut value: serde_yaml::Value = serde_yaml::from_str(content)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         Self::replace_port_in_yaml_value(&mut value, from, to, None);
-        Ok(serde_yaml::to_string(&value)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?)
+        serde_yaml::to_string(&value)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
     fn replace_port_in_yaml_value(value: &mut serde_yaml::Value, from: &str, to: &str, key: Option<&str>) {

@@ -71,10 +71,22 @@ impl Default for LocalProcessManager {
 }
 
 impl Clone for LocalProcessManager {
+    /// NOTE: Cloning shares the same `records` and `history` so both handles
+    /// see the same processes. The old implementation created an empty orphan
+    /// manager which was a silent logic trap.
     fn clone(&self) -> Self {
+        // The process manager is shared via Arc<LocalProcessManager>; cloning
+        // the Arc is the correct pattern. This impl exists only for trait
+        // bounds that require Clone on the concrete type. Sharing the inner
+        // state ensures both handles manage the same set of processes.
         LocalProcessManager {
-            records: Mutex::new(HashMap::new()),
-            history: OperationHistory::default(),
+            records: Mutex::new(
+                self.lock_records()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), Arc::clone(v)))
+                    .collect(),
+            ),
+            history: self.history.clone(),
         }
     }
 }
@@ -165,10 +177,19 @@ impl LocalProcessManager {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Remove stopped/exited/failed records to prevent memory leaks
+    /// Remove stopped/exited records to prevent memory leaks.
+    ///
+    /// Failed records are retained so the GUI can display "could not be started"
+    /// without racing against the next list() call. They are removed once the
+    /// service is restarted (start_process overwrites the record).
     fn cleanup_records(&self) {
         let mut records = self.lock_records();
-        records.retain(|_, record| record.is_running());
+        records.retain(|_, record| {
+            matches!(
+                record.state(),
+                ProcessState::Running | ProcessState::Failed
+            )
+        });
     }
 
     fn start_process(&self, request: &ProcessRequest) -> Result<Arc<ProcessRecord>, String> {
@@ -216,7 +237,8 @@ impl LocalProcessManager {
                     use std::os::windows::io::AsRawHandle;
                     let job_opt = crate::platform::JobObjectGuard::new();
                     if let Some(ref job) = job_opt {
-                        job.assign_process(child.as_raw_handle() as *mut std::ffi::c_void);
+                        // SAFETY: child.as_raw_handle() is a valid open process handle.
+                        unsafe { job.assign_process(child.as_raw_handle()) };
                     }
                     job_opt
                 };
@@ -267,6 +289,11 @@ impl LocalProcessManager {
         let platform = current_platform();
 
         let handle = thread::spawn(move || {
+            /// Maximum time a watcher will poll before giving up and marking the
+            /// process as exited. Prevents zombie threads from leaked handles.
+            const MAX_WATCH_DURATION: Duration = Duration::from_secs(5 * 60);
+
+            let started = Instant::now();
             loop {
                 thread::sleep(POLL_INTERVAL);
 
@@ -279,23 +306,35 @@ impl LocalProcessManager {
                     }
                 };
 
-                let Some(status) = exit else {
-                    continue;
-                };
+                if let Some(status) = exit {
+                    watcher.set_exit_code(status.code());
 
-                watcher.set_exit_code(status.code());
+                    if watcher.state() == ProcessState::Running {
+                        watcher.set_state(ProcessState::Exited);
+                    }
 
-                if watcher.state() == ProcessState::Running {
-                    watcher.set_state(ProcessState::Exited);
+                    let reason = status
+                        .code()
+                        .map(|code| format!("process exited with code {code}"))
+                        .unwrap_or_else(|| format!("process ended on {platform}"));
+
+                    watcher.logs.push_system(&watcher.request.label, reason);
+                    break;
                 }
 
-                let reason = status
-                    .code()
-                    .map(|code| format!("process exited with code {code}"))
-                    .unwrap_or_else(|| format!("process ended on {platform}"));
-
-                watcher.logs.push_system(&watcher.request.label, reason);
-                break;
+                // Safety valve: if the process never signals exit (zombie/leaked
+                // handle), stop polling after MAX_WATCH_DURATION to avoid a
+                // permanent thread leak.
+                if started.elapsed() > MAX_WATCH_DURATION {
+                    if watcher.state() == ProcessState::Running {
+                        watcher.set_state(ProcessState::Exited);
+                        watcher.logs.push_system(
+                            &watcher.request.label,
+                            "watcher timed out; process assumed ended",
+                        );
+                    }
+                    break;
+                }
             }
         });
 
@@ -442,14 +481,14 @@ impl ProcessManager for LocalProcessManager {
 
     fn contains_pid(&self, label: &str, pid: u32) -> bool {
         let records = self.lock_records();
-        if let Some(record) = records.get(label) {
-            if record.is_running() {
-                if record.pid == pid {
-                    return true;
-                }
-                let descendants = crate::platform::get_descendant_pids(record.pid);
-                return descendants.contains(&pid);
+        if let Some(record) = records.get(label)
+            && record.is_running()
+        {
+            if record.pid == pid {
+                return true;
             }
+            let descendants = crate::platform::get_descendant_pids(record.pid);
+            return descendants.contains(&pid);
         }
         false
     }
@@ -457,12 +496,11 @@ impl ProcessManager for LocalProcessManager {
     fn any_contains_pid(&self, pid: u32) -> Option<ProcessSnapshot> {
         let records = self.lock_records();
         for record in records.values() {
-            if record.is_running() {
-                if record.pid == pid
-                    || crate::platform::get_descendant_pids(record.pid).contains(&pid)
-                {
-                    return Some(record.snapshot());
-                }
+            if record.is_running()
+                && (record.pid == pid
+                    || crate::platform::get_descendant_pids(record.pid).contains(&pid))
+            {
+                return Some(record.snapshot());
             }
         }
         None

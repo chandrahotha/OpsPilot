@@ -253,14 +253,14 @@ fn overlay_tracked_state(services: &mut [ServiceStatus], project_path: &str) {
                         "started by Pilot ({port_pid}); port {port} is accepting connections"
                     );
                 }
-            } else if let Some(owner_snapshot) = manager.any_contains_pid(port_pid) {
-                if crate::path_belongs_to_project(&owner_snapshot.working_directory, project_path) {
-                    service.pilot_started = true;
-                    if let Some(port) = service.port {
-                        service.detail = format!(
-                            "started by Pilot ({port_pid}); port {port} is accepting connections"
-                        );
-                    }
+            } else if let Some(owner_snapshot) = manager.any_contains_pid(port_pid)
+                && crate::path_belongs_to_project(&owner_snapshot.working_directory, project_path)
+            {
+                service.pilot_started = true;
+                if let Some(port) = service.port {
+                    service.detail = format!(
+                        "started by Pilot ({port_pid}); port {port} is accepting connections"
+                    );
                 }
             }
         }

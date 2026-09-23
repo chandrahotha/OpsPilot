@@ -43,6 +43,8 @@ interface ProjectDashboardProps {
   onOpenFrontend: () => void;
   onEvent: (message: string, kind: ActivityEvent['kind']) => void;
   onRunDiagnostics: () => void;
+  onDockerComposeUp?: () => void;
+  onDockerComposeDown?: () => void;
 }
 
 export function ProjectDashboard({
@@ -69,6 +71,8 @@ export function ProjectDashboard({
   onOpenFrontend,
   onEvent,
   onRunDiagnostics,
+  onDockerComposeUp,
+  onDockerComposeDown,
 }: ProjectDashboardProps) {
   const showDocker = model.docker !== undefined;
   const showDatabase = model.orm !== undefined || model.database !== undefined;
@@ -76,6 +80,7 @@ export function ProjectDashboard({
   const hasFrontend = model.frontend !== undefined;
   const [logFocus, setLogFocus] = useState<LogFocus | null>(null);
   const [activePanel, setActivePanel] = useState<string>('services');
+  const [showLogsSidebar, setShowLogsSidebar] = useState<boolean>(true);
 
   // Flight summary
   const running = services.filter((service) => service.state === 'running');
@@ -88,61 +93,89 @@ export function ProjectDashboard({
 
   const nextAction = (() => {
     if (externalRunning > 0) {
-      return `${externalRunning} service${externalRunning > 1 ? 's are' : ' is'} running outside Pilot — stop ${externalRunning > 1 ? 'them' : 'it'} from ${externalRunning > 1 ? 'their' : 'its'} card before starting here.`;
+      return `${externalRunning} external service${externalRunning > 1 ? 's' : ''} detected on declared ports. You can stop them with Stop External.`;
     }
     if (running.length > 0 && stoppedCount === 0 && unknownCount === 0) {
-      return 'All engines running.';
+      return 'All systems operational. All declared engines are running.';
     }
     if (running.length > 0) {
       return `${running.length} of ${services.length} engine(s) running.`;
     }
     if (hasStartable) {
-      return 'All engines stopped. Press Start all, or start a single service below.';
+      return 'All engines idle. Click Start All or launch individual engines below.';
     }
-    return 'No startable services — check the plan notes below.';
+    return 'Project scanned. Select any declared command or inspect Docker/Database panels.';
   })();
 
   const panels = [
-    { id: 'services', label: 'Services', always: true },
-    { id: 'plan', label: 'Plan', condition: hasStartable },
-    { id: 'docker', label: 'Docker', condition: showDocker },
-    { id: 'database', label: 'Database', condition: showDatabase },
-    { id: 'scripts', label: 'Scripts', condition: (model.commands?.length ?? 0) > 0 },
-    { id: 'capabilities', label: 'Capabilities', condition: true },
-    { id: 'diagnostics', label: 'Diagnostics', condition: report !== null },
-    { id: 'health', label: 'Health', condition: true },
+    { id: 'services', label: `⚡ Services (${services.length})`, always: true },
+    { id: 'plan', label: `🚀 Plan (${plan?.steps.length ?? 0})`, condition: hasStartable },
+    { id: 'docker', label: '🐳 Docker', condition: showDocker },
+    { id: 'database', label: '🗄️ Database', condition: showDatabase },
+    { id: 'scripts', label: `📜 Scripts (${model.commands?.length ?? 0})`, condition: (model.commands?.length ?? 0) > 0 },
+    { id: 'capabilities', label: '💡 Capabilities', condition: true },
+    { id: 'diagnostics', label: `🔍 Diag${report?.issues ? ` (${report.issues})` : ''}`, condition: report !== null },
+    { id: 'health', label: '🩺 Health', condition: true },
   ].filter(p => p.always || p.condition);
 
   return (
     <div className="dashboard-compact">
-      {/* Cockpit Bar - Fixed at top */}
+      {/* Cockpit Bar - Master Deck Controls */}
       <header className="cockpit-bar-compact">
         <div className="cockpit-left">
-          <div className="project-title">{model.project.name}</div>
+          <div className="project-title-row">
+            <span className="project-icon">📂</span>
+            <span className="project-title">{model.project.name}</span>
+          </div>
           <div className="flight-summary">
-            <span className="chip chip-running">{running.length} ●</span>
-            {externalRunning > 0 && <span className="chip chip-external">{externalRunning} ext</span>}
-            <span className="chip chip-stopped">{stoppedCount} ○</span>
-            {unknownCount > 0 && <span className="chip chip-unknown">{unknownCount} ?</span>}
+            <span className="chip chip-running">{running.length} Online</span>
+            {externalRunning > 0 && <span className="chip chip-external">{externalRunning} Ext</span>}
+            <span className="chip chip-stopped">{stoppedCount} Offline</span>
+            {unknownCount > 0 && <span className="chip chip-unknown">{unknownCount} Standby</span>}
           </div>
         </div>
+
         <div className="cockpit-center">
-          <span className="next-action-compact">{nextAction}</span>
+          <div className="next-action-pill" title={nextAction}>
+            <span className="action-pill-icon">ℹ️</span>
+            <span className="next-action-compact">{nextAction}</span>
+          </div>
         </div>
+
         <div className="cockpit-right">
           <div className="action-group">
-            <button className="btn-cockpit btn-start" onClick={onStartAll} disabled={!hasStartable || bulkBusy !== null} title="Start compose stack + all plan steps">
+            <button
+              className="btn-cockpit btn-start"
+              onClick={onStartAll}
+              disabled={!hasStartable || bulkBusy !== null}
+              title="Start compose stack + all plan steps"
+            >
               {bulkBusy ?? '▶ Start All'}
             </button>
-            <button className="btn-cockpit btn-stop" onClick={onStopAll} disabled={!canStopAll} title="Stop all Pilot processes + compose down">
+            <button
+              className="btn-cockpit btn-stop"
+              onClick={onStopAll}
+              disabled={!canStopAll}
+              title="Stop all Pilot processes + compose down"
+            >
               {bulkBusy ?? '■ Stop All'}
             </button>
-            <button className="btn-cockpit btn-danger" onClick={onKillAll} disabled={bulkBusy !== null} title="Force-kill stuck Pilot processes">
+            <button
+              className="btn-cockpit btn-danger"
+              onClick={onKillAll}
+              disabled={bulkBusy !== null}
+              title="Force-kill stuck Pilot processes"
+            >
               ☠ Kill All
             </button>
             {hasFrontend && (
-              <button className="btn-cockpit btn-open" onClick={onOpenFrontend} disabled={frontendUrl === null} title={frontendUrl ? `Open ${frontendUrl}` : 'Start frontend first'}>
-                {frontendUrl ? '🌐 Open' : '🌐 Frontend'}
+              <button
+                className="btn-cockpit btn-open"
+                onClick={onOpenFrontend}
+                disabled={frontendUrl === null}
+                title={frontendUrl ? `Open ${frontendUrl}` : 'Start frontend first'}
+              >
+                {frontendUrl ? '🌐 Open App' : '🌐 Frontend'}
               </button>
             )}
             <button className="btn-cockpit btn-diag" onClick={onRunDiagnostics} title="Run diagnostics">
@@ -151,21 +184,28 @@ export function ProjectDashboard({
             <button className="btn-cockpit btn-rescan" onClick={onRescan} title="Rescan project">
               ⟳ Rescan
             </button>
+            <button
+              className={`btn-cockpit btn-toggle-logs ${showLogsSidebar ? 'active' : ''}`}
+              onClick={() => setShowLogsSidebar(!showLogsSidebar)}
+              title={showLogsSidebar ? 'Collapse live logs sidebar' : 'Expand live logs sidebar'}
+            >
+              {showLogsSidebar ? '◨ Hide Logs' : '◧ Logs'}
+            </button>
           </div>
         </div>
       </header>
 
-          {message && (
-            <div className="banner-compact">
-              <span>{message}</span>
-              <button type="button" className="banner-dismiss" onClick={onClearMessage} title="Dismiss">
-                ✕
-              </button>
-            </div>
-          )}
+      {message && (
+        <div className="banner-compact">
+          <span>{message}</span>
+          <button type="button" className="banner-dismiss" onClick={onClearMessage} title="Dismiss">
+            ✕
+          </button>
+        </div>
+      )}
 
-      {/* Main Grid - Compact panels */}
-      <div className="cockpit-grid">
+      {/* Main Grid - Responsive Cockpit Layout */}
+      <div className={`cockpit-grid ${!showLogsSidebar ? 'logs-hidden' : ''}`}>
         {/* Left: Tabbed Panels */}
         <main className="cockpit-main">
           <nav className="panel-tabs" role="tablist">
@@ -187,11 +227,15 @@ export function ProjectDashboard({
                 services={services}
                 startableKeys={plan?.steps.map((step) => step.service) ?? []}
                 busyServices={busyServices}
+                commands={model.commands}
+                hasDocker={showDocker}
                 onStart={onStartProject}
                 onStop={onStopProject}
                 onStopExternal={onStopExternalProject}
                 onRestart={onRestartProject}
                 onServiceLogs={(service) => setLogFocus({ key: `proc:${service}`, ts: Date.now() })}
+                onDockerComposeUp={onDockerComposeUp}
+                onDockerComposeDown={onDockerComposeDown}
               />
             )}
             {activePanel === 'plan' && hasStartable && (
@@ -230,9 +274,11 @@ export function ProjectDashboard({
         </main>
 
         {/* Right: Logs Panel (Collapsible) */}
-        <aside className="cockpit-logs">
-          <LogsPanel events={events} projectName={model.project.name} focus={logFocus} />
-        </aside>
+        {showLogsSidebar && (
+          <aside className="cockpit-logs">
+            <LogsPanel events={events} projectName={model.project.name} focus={logFocus} />
+          </aside>
+        )}
       </div>
     </div>
   );

@@ -203,8 +203,13 @@ impl JobObjectGuard {
         }
     }
 
-    pub fn assign_process(&self, process_handle: *mut std::ffi::c_void) -> bool {
+    /// # Safety
+    ///
+    /// `process_handle` must be a valid, open process handle for the lifetime
+    /// of this call.
+    pub unsafe fn assign_process(&self, process_handle: std::os::windows::io::RawHandle) -> bool {
         use win_api::*;
+        // SAFETY: caller guarantees process_handle is a valid open process handle.
         unsafe { AssignProcessToJobObject(self.handle, process_handle) != 0 }
     }
 

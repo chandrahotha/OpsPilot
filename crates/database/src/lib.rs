@@ -696,6 +696,7 @@ impl DatabaseManager {
     /// The process state is polled until it exits (or the timeout elapses)
     /// instead of sleeping a fixed amount of time, and the trailing log
     /// output is captured so the caller sees what actually happened.
+    #[allow(dead_code)]
     fn run_command(
         &self,
         integration: &DatabaseIntegration,
@@ -801,6 +802,7 @@ impl DatabaseManager {
     }
 
     /// Last lines of captured stdout/stderr for a database operation.
+    #[allow(dead_code)]
     fn tail_logs(&self, label: &str) -> String {
         Self::tail_logs_static(&self.process_manager, label)
     }
