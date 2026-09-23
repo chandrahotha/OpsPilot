@@ -6,7 +6,7 @@
  * of being swallowed.
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import type {
   DatabaseOutcome,
   DiagnosticsReport,
@@ -18,6 +18,66 @@ import type {
   StartupPlan,
   SystemHealth,
 } from 'ops-pilot-shared';
+
+/** Safe invoke wrapper that detects if running inside a Tauri WebView or standalone browser */
+async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  // Check if Tauri internals or global IPC is present
+  const isTauriEnv =
+    typeof window !== 'undefined' &&
+    (('__TAURI_INTERNALS__' in window && (window as unknown as { __TAURI_INTERNALS__?: { invoke?: unknown } }).__TAURI_INTERNALS__?.invoke) ||
+      ('__TAURI__' in window && (window as unknown as { __TAURI__?: { core?: { invoke?: unknown } } }).__TAURI__?.core?.invoke));
+
+  if (!isTauriEnv) {
+    // In standalone browser (e.g. http://localhost:1420 opened directly in Chrome/Edge instead of Tauri window)
+    console.warn(`[OpsPilot] Tauri IPC unavailable for command '${cmd}'. Standalone browser detected.`);
+    if (cmd === 'detect_project') {
+      return {
+        detected: false,
+        evidence: ['Running in web browser mode. Launch via Tauri desktop window to access local host processes.'],
+      } as unknown as T;
+    }
+    if (cmd === 'get_status') {
+      return [] as unknown as T;
+    }
+    if (cmd === 'get_startup_plan') {
+      return { executable: false, steps: [], warnings: ['Launch via OpsPilot Desktop window to execute services.'] } as unknown as T;
+    }
+    if (cmd === 'run_diagnostics') {
+      return { checks: [], issues: 0 } as unknown as T;
+    }
+    if (cmd === 'list_processes') {
+      return [] as unknown as T;
+    }
+    if (cmd === 'list_docker_containers' || cmd === 'docker_status') {
+      return { unavailable: 'Docker bridge requires Tauri native window' } as unknown as T;
+    }
+    if (cmd === 'system_health') {
+      return {
+        frontend: true,
+        tauriBridge: false,
+        rustBackend: false,
+        projectScanner: false,
+        projectDetected: false,
+        processManager: false,
+        trackedProcesses: 0,
+        dockerAvailable: false,
+        composeAvailable: false,
+        readiness: [],
+        warnings: ['Opened in standalone browser (http://localhost:1420). Native Tauri bridge is inactive.'],
+      } as unknown as T;
+    }
+    throw new Error(`Command '${cmd}' requires the native OpsPilot desktop application window.`);
+  }
+
+  try {
+    return await tauriInvoke<T>(cmd, args);
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('reading \'invoke\'')) {
+      throw new Error(`OpsPilot native bridge is not initialized. Please run the desktop application.`);
+    }
+    throw err;
+  }
+}
 
 /** Convert an unknown command rejection into a readable message */
 export function toMessage(error: unknown): string {

@@ -16,7 +16,11 @@ import type { ContainerStatus, LogEntry, LogStream, ProcessSnapshot } from 'ops-
 import type { ActivityEvent } from '../App';
 import * as api from '../api';
 import { toMessage } from '../api';
-import { expectedComposeProject } from './DockerPanel';
+
+function expectedComposeProject(projectPath: string): string {
+  const base = projectPath.split(/[\\/]/).filter((part) => part.length > 0).pop() ?? '';
+  return base.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+}
 
 const LOG_INTERVAL_MS = 2000;
 const REFRESH_INTERVAL_MS = 5000;

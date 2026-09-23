@@ -30,7 +30,7 @@ interface DockerPanelProps {
  * the lowercased directory basename. Valid project names are lowercase letters,
  * digits, dashes and underscores.
  */
-export function expectedComposeProject(projectPath: string): string {
+function expectedComposeProject(projectPath: string): string {
   const base = projectPath.split(/[\\/]/).filter((part) => part.length > 0).pop() ?? '';
   return base.toLowerCase().replace(/[^a-z0-9_-]/g, '');
 }
