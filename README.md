@@ -5,6 +5,15 @@
 # OpsPilot — Project Command Center
 
 <div align="center">
+
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/engine-Rust-orange.svg)](Cargo.toml)
+[![Tauri](https://img.shields.io/badge/desktop-Tauri%202-24C8DB.svg)](pilot/apps/desktop)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#project-structure)
+
+</div>
+
+<div align="center">
   <img width="1895" height="725" alt="OpsPilot Dashboard" src="https://github.com/user-attachments/assets/8de1986f-cc08-4386-a510-40df82dd852b" />
   <br/><br/>
   <strong>Install once. Open any project. Pilot tells you what it is, starts what it needs, and shows you everything that happens.</strong>
