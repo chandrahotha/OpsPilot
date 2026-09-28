@@ -1,6 +1,6 @@
 {
   "name": "@ops_pilot/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Detect and operate an unfamiliar project directory: services, ports, environment and diagnostics.",
   "license": "Apache-2.0",
   "author": "Digi Tracks",
