@@ -1,9 +1,22 @@
-# ops_pilot
+<div align="center">
+  <img width="280" alt="OpsPilot" src="https://raw.githubusercontent.com/chandrahotha/OpsPilot/main/docs/assets/logo.png" />
+</div>
+
+# @ops_pilot/cli
+
+<div align="center">
+
+[![npm](https://img.shields.io/npm/v/@ops_pilot/cli.svg)](https://www.npmjs.com/package/@ops_pilot/cli)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/chandrahotha/OpsPilot/blob/main/LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D18-339933.svg)](package.json)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#how-this-package-works)
+
+</div>
 
 Install once, then open any project:
 
 ```bash
-npm install -g ops_pilot
+npm install -g @ops_pilot/cli
 cd my-project
 pilot
 ```

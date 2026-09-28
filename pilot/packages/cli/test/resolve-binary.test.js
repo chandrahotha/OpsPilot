@@ -100,7 +100,7 @@ test('the bundled binary is used when no platform package is installed', () => {
   });
 
   assert.equal(resolution.binary, bundled);
-  assert.equal(resolution.source, 'bundled in ops_pilot');
+  assert.equal(resolution.source, 'bundled in @ops_pilot/cli');
 });
 
 test('a development build is the last resort', () => {

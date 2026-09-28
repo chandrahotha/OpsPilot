@@ -69,7 +69,7 @@ it. Published by Digi Tracks.
 ### Global CLI (npm)
 
 ```bash
-npm install -g ops_pilot
+npm install -g @ops_pilot/cli
 cd my-project
 pilot
 ```

@@ -1,8 +1,18 @@
 {
-  "name": "ops_pilot",
+  "name": "@ops_pilot/cli",
   "version": "0.1.0",
   "description": "Detect and operate an unfamiliar project directory: services, ports, environment and diagnostics.",
   "license": "Apache-2.0",
+  "author": "Digi Tracks",
+  "homepage": "https://github.com/chandrahotha/OpsPilot#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chandrahotha/OpsPilot.git",
+    "directory": "pilot/packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/chandrahotha/OpsPilot/issues"
+  },
   "type": "commonjs",
   "bin": {
     "pilot": "bin/ops-pilot.js",

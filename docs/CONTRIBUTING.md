@@ -8,7 +8,7 @@
 4. Update or add tests with the change:
    - Rust: `cargo test --workspace`
    - TypeScript: `npm run typecheck`
-   - Launcher: `npm --workspace ops_pilot test`
+   - Launcher: `npm --workspace @ops_pilot/cli test`
 5. Keep the tree warning-free and formatted: `cargo fmt --all`,
    `cargo clippy --workspace --all-targets -- -D warnings`, `npm run check`
    (typecheck plus all tests) must pass before opening a PR. The `Check`

@@ -18,6 +18,7 @@ pilot/packages/cli/bin/pilot-*
 # OS / editor
 .DS_Store
 Thumbs.db
-
-
 .vscode
+
+# Claude Code session state - local only, never pushed
+.claude
