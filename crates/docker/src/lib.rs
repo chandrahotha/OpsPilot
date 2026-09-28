@@ -84,6 +84,9 @@ pub enum DockerOutcome {
 /// Without `CREATE_NO_WINDOW`, every Docker probe flashes a console on
 /// Windows — including the ones behind container-list refreshes.
 fn docker_command() -> Command {
+    // `mut` is only exercised by the Windows creation_flags() call below;
+    // flagged as unused on every other platform, where it's genuinely not.
+    #[allow(unused_mut)]
     let mut command = Command::new("docker");
     #[cfg(windows)]
     {

@@ -311,15 +311,15 @@ pub fn get_descendant_pids(root_pid: u32) -> Vec<u32> {
             for entry in entries.flatten() {
                 if let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() {
                     let stat_path = format!("/proc/{pid}/stat");
-                    if let Ok(content) = std::fs::read_to_string(stat_path) {
-                        if let Some(idx) = content.rfind(')') {
-                            let rest = &content[idx + 1..];
-                            let parts: Vec<&str> = rest.split_whitespace().collect();
-                            if parts.len() >= 2 {
-                                if let Ok(ppid) = parts[1].parse::<u32>() {
-                                    parent_to_children.entry(ppid).or_default().push(pid);
-                                }
-                            }
+                    if let Ok(content) = std::fs::read_to_string(stat_path)
+                        && let Some(idx) = content.rfind(')')
+                    {
+                        let rest = &content[idx + 1..];
+                        let parts: Vec<&str> = rest.split_whitespace().collect();
+                        if parts.len() >= 2
+                            && let Ok(ppid) = parts[1].parse::<u32>()
+                        {
+                            parent_to_children.entry(ppid).or_default().push(pid);
                         }
                     }
                 }
