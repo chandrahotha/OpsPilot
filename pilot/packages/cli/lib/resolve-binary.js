@@ -7,9 +7,9 @@
  * binary. Resolution order (most specific first):
  *
  *   1. OPS_PILOT_BINARY      - explicit override, for unusual setups and tests
- *   2. @ops-pilot/cli-<platform>-<arch>  - optional platform package (the way a
- *      published release ships the native binary, `npm i -g ops-pilot @ops-pilot/cli-win32-x64`)
- *   3. <package>/bin/pilot[.exe]          - binary bundled into the package by CI at publish time
+ *   2. @ops_pilot/cli-<platform>-<arch>  - optional platform package (the way a
+ *      published release ships the native binary, `npm i -g ops-pilot @ops_pilot/cli-win32-x64`)
+ *   3. <package>/bin/pilot-<platform>-<arch>[.exe] - binary bundled into the package by CI at publish time
  *   4. <repo>/target/{release,debug}/pilot[.exe] - development builds, searched upwards
  *
  * Every lookup is injectable so the resolution logic can be tested without
@@ -26,12 +26,13 @@ function binaryName(platform) {
 
 /** Name of the optional package that carries the native binary */
 function platformPackageName(platform, arch) {
-  return `@ops-pilot/cli-${platform}-${arch}`;
+  return `@ops_pilot/cli-${platform}-${arch}`;
 }
 
-/** Binary bundled inside the npm package itself */
-function bundledBinaryPath(packageRoot, platform) {
-  return path.join(packageRoot, 'bin', binaryName(platform));
+/** Binary bundled inside the npm package itself, named for its platform and arch */
+function bundledBinaryPath(packageRoot, platform, arch) {
+  const suffix = platform === 'win32' ? '.exe' : '';
+  return path.join(packageRoot, 'bin', `pilot-${platform}-${arch}${suffix}`);
 }
 
 /** Development builds, from the package directory up to the repository root */
@@ -118,7 +119,7 @@ function resolveBinary(options = {}) {
     searched.push(`${packageName} (not installed)`);
   }
 
-  const bundled = bundledBinaryPath(packageRoot, platform);
+  const bundled = bundledBinaryPath(packageRoot, platform, arch);
   searched.push(bundled);
 
   if (exists(bundled)) {

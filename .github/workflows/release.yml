@@ -135,17 +135,17 @@ jobs:
           chmod +x packages/cli-linux-x64/bin/pilot
           
           # Create package.json for each platform package
+          VERSION="${GITHUB_REF_NAME#v}"
           for platform in win32-x64 darwin-x64 linux-x64; do
             cat > packages/cli-${platform}/package.json << EOF
             {
-              "name": "@ops-pilot/cli-${platform}",
-              "version": "${{ github.ref_name }}",
+              "name": "@ops_pilot/cli-${platform}",
+              "version": "${VERSION}",
               "description": "Native pilot binary for ${platform}",
-              "license": "MIT",
+              "license": "Apache-2.0",
               "os": ["${platform%%-x64}"],
               "cpu": ["x64"],
-              "files": ["bin"],
-              "private": true
+              "files": ["bin"]
             }
             EOF
           done
@@ -180,13 +180,12 @@ jobs:
           # Bundle the native binary into the CLI npm package for fallback
           mkdir -p pilot/packages/cli/bin
           
-          # Include all platform binaries with platform-specific names
+          # Include all platform binaries, named as resolve-binary.js expects:
+          # pilot-<platform>-<arch>[.exe]
           cp artifacts/pilot-linux-x64 pilot/packages/cli/bin/pilot-linux-x64
           cp artifacts/pilot-macos-x64 pilot/packages/cli/bin/pilot-darwin-x64
           cp artifacts/pilot-win32-x64.exe pilot/packages/cli/bin/pilot-win32-x64.exe
-          
-          # Also include the current platform binary as 'pilot' for local installs
-          cp artifacts/pilot-linux-x64 pilot/packages/cli/bin/pilot
+          chmod +x pilot/packages/cli/bin/pilot-linux-x64 pilot/packages/cli/bin/pilot-darwin-x64
       - name: Install npm dependencies
         run: npm ci
       - name: Build workspace
@@ -197,6 +196,9 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Run tests
         run: npm test
+      - name: Set package version from tag
+        run: npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
+        working-directory: pilot/packages/cli
       - name: Pack npm package
         run: |
           cd pilot/packages/cli

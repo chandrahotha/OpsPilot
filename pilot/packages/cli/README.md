@@ -25,7 +25,7 @@ The npm package is a thin Node launcher; the engine is the native `pilot` binary
 written in Rust. The launcher resolves that binary in this order:
 
 1. `OPS_PILOT_BINARY` - explicit override
-2. `@ops-pilot/cli-<platform>-<arch>` - optional platform package carrying the binary
+2. `@ops_pilot/cli-<platform>-<arch>` - optional platform package carrying the binary
 3. `bin/pilot[.exe]` inside this package - populated by the release pipeline
 4. `target/{release,debug}/pilot[.exe]` in the repository - development builds
 

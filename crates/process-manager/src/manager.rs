@@ -734,4 +734,163 @@ mod tests {
 
         manager.kill("contains-test");
     }
+
+    /// Hammers `restart` on the same running label from several threads at
+    /// once. This is the scenario `begin_operation`'s per-label lock exists
+    /// for: without it, two concurrent restarts could each observe the
+    /// process as stopped and spawn their own replacement, leaving one
+    /// untracked and leaked. Every losing thread must get a clean rejection
+    /// (never a panic, a hang, or a corrupted record), and exactly one
+    /// process must be left running afterwards.
+    #[test]
+    fn concurrent_restarts_do_not_leak_or_double_start() {
+        let manager = Arc::new(LocalProcessManager::new());
+        let label = "restart-storm";
+        assert!(manager.start(&sleeper_request(label)).is_ok());
+
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let manager = Arc::clone(&manager);
+                thread::spawn(move || manager.restart(label))
+            })
+            .collect();
+
+        let outcomes: Vec<ProcessOutcome> = threads
+            .into_iter()
+            .map(|handle| handle.join().expect("restart thread panicked"))
+            .collect();
+
+        for outcome in &outcomes {
+            match outcome {
+                ProcessOutcome::Started(_) => {}
+                ProcessOutcome::Error(message) => {
+                    assert!(
+                        message.contains("already in progress"),
+                        "unexpected restart error: {message}"
+                    );
+                }
+                other => panic!("unexpected restart outcome: {other:?}"),
+            }
+        }
+
+        let snapshot = match manager.status(label) {
+            ProcessOutcome::Snapshot(snapshot) => snapshot,
+            other => panic!("expected a snapshot after the restart storm, got {other:?}"),
+        };
+        assert_eq!(snapshot.state, ProcessState::Running);
+        let pid = snapshot.pid.expect("running process must have a pid");
+        assert!(
+            manager.contains_pid(label, pid),
+            "the tracked pid after the storm must be a real, currently-alive process"
+        );
+        assert_eq!(
+            manager.list().iter().filter(|s| s.label == label).count(),
+            1,
+            "restart storm must not leave duplicate or orphaned records"
+        );
+
+        manager.kill(label);
+    }
+
+    /// Hammers `start` on the same not-yet-running label from several
+    /// threads at once. Only one may actually spawn a process; every other
+    /// thread must be rejected rather than silently spawning a second,
+    /// untracked process under the same label.
+    #[test]
+    fn concurrent_starts_of_the_same_label_never_double_spawn() {
+        let manager = Arc::new(LocalProcessManager::new());
+        let label = "start-storm";
+
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let manager = Arc::clone(&manager);
+                let request = sleeper_request(label);
+                thread::spawn(move || manager.start(&request))
+            })
+            .collect();
+
+        let outcomes: Vec<ProcessOutcome> = threads
+            .into_iter()
+            .map(|handle| handle.join().expect("start thread panicked"))
+            .collect();
+
+        let started = outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, ProcessOutcome::Started(_)))
+            .count();
+        assert_eq!(
+            started, 1,
+            "exactly one concurrent start must win; the rest must be rejected, \
+             never silently spawn a second process"
+        );
+
+        for outcome in &outcomes {
+            if let ProcessOutcome::Error(message) = outcome {
+                assert!(
+                    message.contains("already running") || message.contains("already in progress"),
+                    "unexpected start error: {message}"
+                );
+            }
+        }
+
+        assert_eq!(
+            manager.list().iter().filter(|s| s.label == label).count(),
+            1,
+            "concurrent starts must not create duplicate records"
+        );
+
+        manager.kill(label);
+    }
+
+    /// Races `kill` against `restart` on the same running label. Whichever
+    /// operation actually wins the per-label lock, the manager must land in
+    /// a self-consistent end state: a `Running` snapshot's pid must belong to
+    /// a real, currently-alive process (never a stale/reused pid), and a
+    /// `Stopped`/`Exited` snapshot must not leave a dangling process behind.
+    #[test]
+    fn concurrent_kill_and_restart_land_in_a_consistent_state() {
+        let manager = Arc::new(LocalProcessManager::new());
+        let label = "kill-vs-restart";
+        assert!(manager.start(&sleeper_request(label)).is_ok());
+
+        let killer = {
+            let manager = Arc::clone(&manager);
+            thread::spawn(move || manager.kill(label))
+        };
+        let restarter = {
+            let manager = Arc::clone(&manager);
+            thread::spawn(move || manager.restart(label))
+        };
+
+        let kill_outcome = killer.join().expect("kill thread panicked");
+        let restart_outcome = restarter.join().expect("restart thread panicked");
+
+        for outcome in [&kill_outcome, &restart_outcome] {
+            if let ProcessOutcome::Error(message) = outcome {
+                assert!(
+                    message.contains("already in progress"),
+                    "unexpected error racing kill against restart: {message}"
+                );
+            }
+        }
+
+        match manager.status(label) {
+            ProcessOutcome::Snapshot(snapshot) if snapshot.state == ProcessState::Running => {
+                let pid = snapshot.pid.expect("running process must have a pid");
+                assert!(
+                    manager.contains_pid(label, pid),
+                    "a Running snapshot after the race must point at a real process"
+                );
+            }
+            ProcessOutcome::Snapshot(snapshot) => {
+                assert!(matches!(
+                    snapshot.state,
+                    ProcessState::Stopped | ProcessState::Exited
+                ));
+            }
+            other => panic!("unexpected status after kill/restart race: {other:?}"),
+        }
+
+        manager.kill(label);
+    }
 }

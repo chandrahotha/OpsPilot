@@ -28,9 +28,9 @@ test('binaryName adds .exe only on Windows', () => {
 });
 
 test('platformPackageName scopes platform and architecture', () => {
-  assert.equal(platformPackageName('win32', 'x64'), '@ops-pilot/cli-win32-x64');
-  assert.equal(platformPackageName('darwin', 'arm64'), '@ops-pilot/cli-darwin-arm64');
-  assert.equal(platformPackageName('linux', 'x64'), '@ops-pilot/cli-linux-x64');
+  assert.equal(platformPackageName('win32', 'x64'), '@ops_pilot/cli-win32-x64');
+  assert.equal(platformPackageName('darwin', 'arm64'), '@ops_pilot/cli-darwin-arm64');
+  assert.equal(platformPackageName('linux', 'x64'), '@ops_pilot/cli-linux-x64');
 });
 
 test('development builds are searched upwards to the repository root', () => {
@@ -70,8 +70,8 @@ test('a wrong OPS_PILOT_BINARY is reported instead of silently ignored', () => {
 });
 
 test('an installed platform package is preferred over the bundled binary', () => {
-  const manifest = path.resolve('/installed/node_modules/@ops-pilot/cli-win32-x64/package.json');
-  const expected = path.resolve('/installed/node_modules/@ops-pilot/cli-win32-x64/bin/pilot.exe');
+  const manifest = path.resolve('/installed/node_modules/@ops_pilot/cli-win32-x64/package.json');
+  const expected = path.resolve('/installed/node_modules/@ops_pilot/cli-win32-x64/bin/pilot.exe');
 
   const resolution = resolveBinary({
     platform: 'win32',
@@ -79,19 +79,20 @@ test('an installed platform package is preferred over the bundled binary', () =>
     env: {},
     packageRoot: ROOT,
     requireResolve: (specifier) =>
-      specifier === '@ops-pilot/cli-win32-x64/package.json' ? manifest : null,
+      specifier === '@ops_pilot/cli-win32-x64/package.json' ? manifest : null,
     exists: (candidate) => candidate === expected,
   });
 
   assert.equal(resolution.binary, expected);
-  assert.equal(resolution.source, '@ops-pilot/cli-win32-x64');
+  assert.equal(resolution.source, '@ops_pilot/cli-win32-x64');
 });
 
 test('the bundled binary is used when no platform package is installed', () => {
-  const bundled = bundledBinaryPath(ROOT, 'win32');
+  const bundled = bundledBinaryPath(ROOT, 'win32', 'x64');
 
   const resolution = resolveBinary({
     platform: 'win32',
+    arch: 'x64',
     env: {},
     packageRoot: ROOT,
     requireResolve: () => null,
@@ -129,7 +130,7 @@ test('a missing binary produces an actionable error', () => {
 
   assert.equal(resolution.binary, undefined);
   assert.match(resolution.error, /linux-x64/);
-  assert.match(resolution.error, /@ops-pilot\/cli-linux-x64/);
+  assert.match(resolution.error, /@ops_pilot\/cli-linux-x64/);
   assert.match(resolution.error, /cargo build --release --bin pilot/);
-  assert.ok(resolution.searched.includes(bundledBinaryPath(ROOT, 'linux')));
+  assert.ok(resolution.searched.includes(bundledBinaryPath(ROOT, 'linux', 'x64')));
 });
