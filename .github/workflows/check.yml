@@ -28,7 +28,7 @@ jobs:
       - name: Install system dependencies (Tauri/Linux)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb dbus-x11
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -43,7 +43,10 @@ jobs:
       - name: Lint (clippy, warnings deny)
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Rust tests
-        run: cargo test --workspace
+        # The desktop crate links GTK/WebKit/D-Bus (Tauri's Linux backend);
+        # even its plain logic tests crash on a headless runner with no
+        # display or session bus to attach to. xvfb-run supplies both.
+        run: xvfb-run --auto-servernum -- dbus-run-session -- cargo test --workspace
       - name: CLI tests
         run: npm run test:cli
       - name: Web build
