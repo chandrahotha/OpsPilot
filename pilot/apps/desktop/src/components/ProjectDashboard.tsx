@@ -32,7 +32,7 @@ interface ProjectDashboardProps {
   bulkBusy: string | null;
   frontendUrl: string | null;
   events: ActivityEvent[];
-  onStartProject: (service: string) => void;
+  onStartProject: (service: string, command?: string) => void;
   onStopProject: (service: string) => void;
   onStopExternalProject: (service: string) => void;
   onRestartProject: (service: string) => void;

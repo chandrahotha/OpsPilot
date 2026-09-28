@@ -19,7 +19,7 @@ interface ServiceGridProps {
   commands?: CommandInfo[];
   /** Whether Docker / Docker Compose is present */
   hasDocker?: boolean;
-  onStart: (service: string) => void;
+  onStart: (service: string, command?: string) => void;
   onStop: (service: string) => void;
   onStopExternal: (service: string) => void;
   onRestart: (service: string) => void;
@@ -58,15 +58,24 @@ export function ServiceGrid({
 }: ServiceGridProps) {
   const [selectedScript, setSelectedScript] = useState<Record<string, string>>({});
 
-  // Find any declared run scripts that can start an unassigned service
+  // Words that mark a script as destructive/one-off rather than something
+  // that brings a service up — never auto-offer these as a service's Start.
+  const DESTRUCTIVE_SCRIPT_HINTS = ['reset', 'drop', 'delete', 'destroy', 'wipe', 'purge', 'remove', 'uninstall', 'clean'];
+
+  // Find any declared run scripts that can start an unassigned service.
+  // Matches whole tokens (split on non-alphanumeric characters) rather than
+  // raw substrings, so e.g. "serverless-deploy" does not match "backend" via
+  // "server", and never offers a destructive script (e.g. "reset-database")
+  // as a service's Start action.
   const findMatchingCommand = (serviceKey: string): CommandInfo | undefined => {
     const key = serviceKey.toLowerCase();
     return commands.find((c) => {
       const name = c.name.toLowerCase();
-      if (key === 'frontend' && (name.includes('front') || name.includes('web') || name.includes('client') || name.includes('ui'))) return true;
-      if (key === 'backend' && (name.includes('back') || name.includes('api') || name.includes('server'))) return true;
-      if (name.includes(key)) return true;
-      return false;
+      const tokens = name.split(/[^a-z0-9]+/).filter(Boolean);
+      if (tokens.some((t) => DESTRUCTIVE_SCRIPT_HINTS.includes(t))) return false;
+      if (key === 'frontend') return tokens.some((t) => ['front', 'frontend', 'web', 'client', 'ui'].includes(t));
+      if (key === 'backend') return tokens.some((t) => ['back', 'backend', 'api', 'server'].includes(t));
+      return tokens.includes(key);
     });
   };
 
@@ -106,7 +115,7 @@ export function ServiceGrid({
                   key={cmd.name}
                   type="button"
                   className="btn-quick-script"
-                  onClick={() => onStart(cmd.name)}
+                  onClick={() => onStart(`script-${cmd.name}`, cmd.name)}
                   title={`Run \`${cmd.command}\` (${cmd.source})`}
                 >
                   <span className="script-icon">▶</span> {cmd.name}
@@ -257,7 +266,7 @@ export function ServiceGrid({
                           <button
                             type="button"
                             className={`btn-engine ${busy?.includes('Start') ? 'btn-busy' : 'btn-start-engine'}`}
-                            onClick={() => onStart(isStartable ? service.key : (fallbackCommand?.name ?? service.key))}
+                            onClick={() => onStart(service.key, isStartable ? undefined : fallbackCommand?.name)}
                             disabled={isOnline || busy !== undefined}
                             title={isStartable ? `Start ${service.label}` : `Start via \`${fallbackCommand?.name}\``}
                           >
@@ -282,7 +291,7 @@ export function ServiceGrid({
                             <button
                               type="button"
                               className="btn-engine btn-start-engine"
-                              onClick={() => onStart(currentScript)}
+                              onClick={() => onStart(service.key, currentScript)}
                               disabled={isOnline || busy !== undefined || !currentScript}
                               title={`Execute ${currentScript}`}
                             >

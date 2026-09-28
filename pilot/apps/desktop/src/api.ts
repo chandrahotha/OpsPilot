@@ -37,16 +37,16 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
       } as unknown as T;
     }
     if (cmd === 'get_status') {
-      return [] as unknown as T;
+      throw new Error('Service status is unavailable: launch via the OpsPilot desktop window to observe real services.');
     }
     if (cmd === 'get_startup_plan') {
       return { executable: false, steps: [], warnings: ['Launch via OpsPilot Desktop window to execute services.'] } as unknown as T;
     }
     if (cmd === 'run_diagnostics') {
-      return { checks: [], issues: 0 } as unknown as T;
+      throw new Error('Diagnostics did not run: launch via the OpsPilot desktop window to check this project for real.');
     }
     if (cmd === 'list_processes') {
-      return [] as unknown as T;
+      throw new Error('Process list is unavailable: launch via the OpsPilot desktop window to see tracked processes.');
     }
     if (cmd === 'list_docker_containers' || cmd === 'docker_status') {
       return { unavailable: 'Docker bridge requires Tauri native window' } as unknown as T;
@@ -107,9 +107,15 @@ export function runDiagnostics(path?: string): Promise<DiagnosticsReport> {
   return invoke<DiagnosticsReport>('run_diagnostics', { path: path ?? null });
 }
 
-/** Start a project service (process lifecycle - phase 4) */
-export function startProject(path: string | undefined, service: string): Promise<string> {
-  return invoke<string>('start_project', { path: path ?? null, service });
+/**
+ * Start a project service (process lifecycle - phase 4).
+ * `service` is always the tracked process label (so Stop/Restart keep
+ * working); `command` optionally names a declared project command to run
+ * instead of the service's own startup-plan step (used for fallback/assigned
+ * scripts on services the plan cannot start directly).
+ */
+export function startProject(path: string | undefined, service: string, command?: string): Promise<string> {
+  return invoke<string>('start_project', { path: path ?? null, service, command: command ?? null });
 }
 
 /** Stop a project service (process lifecycle - phase 4) */

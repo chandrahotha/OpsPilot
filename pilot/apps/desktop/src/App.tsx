@@ -3,6 +3,7 @@ import type { DiagnosticsReport, ScanResult, ServiceStatus, StartupPlan } from '
 import * as api from './api';
 import { toMessage } from './api';
 import { ProjectDashboard } from './components/ProjectDashboard';
+import logoMark from './assets/opspilot-mark.png';
 import './style.css';
 
 const STATUS_INTERVAL_MS = 5000;
@@ -356,7 +357,10 @@ function App() {
   return (
     <div className='app'>
       <header className='command-header-slim'>
-        <span className='brand-slim'>OpsPilot</span>
+        <span className='brand-slim'>
+          <img src={logoMark} alt='' className='brand-mark' />
+          OpsPilot
+        </span>
         <span className='header-project' title={currentPath || 'No project selected'}>
           {scan?.model?.project.name ?? 'No project'}
         </span>
@@ -423,8 +427,8 @@ function App() {
             bulkBusy={bulkBusy}
             frontendUrl={frontendUrl}
             events={events}
-            onStartProject={(service) =>
-              void runServiceAction(service, 'Starting…', () => api.startProject(currentPath, service))
+            onStartProject={(service, command) =>
+              void runServiceAction(service, 'Starting…', () => api.startProject(currentPath, service, command))
             }
             onStopProject={(service) =>
               void runServiceAction(service, 'Stopping…', () => api.stopProject(service))

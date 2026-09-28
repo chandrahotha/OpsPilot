@@ -31,16 +31,22 @@
   box-sizing: border-box;
 }
 
+html {
+  height: 100%;
+  margin: 0;
+}
+
 body {
   margin: 0;
+  height: 100%;
+  overflow: hidden;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--background);
   color: var(--text-primary);
-  min-height: 100vh;
 }
 
 #root {
-  min-height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -48,42 +54,23 @@ body {
 .app {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100%;
+  overflow: hidden;
   padding: 1rem 1.5rem;
   max-width: 1680px;
   margin: 0 auto;
   width: 100%;
 }
 
-header {
-  margin-bottom: 2rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--border);
-}
-
-/* Master Command Header */
-.command-header-slim {
+/* The single <main> below the header holds any banner/scan-logs plus the
+   dashboard; it must be a bounded flex column so the dashboard's own
+   internal scroll regions are what scroll, not the page. */
+.app > main {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.65rem 1rem;
-  background: rgba(15, 23, 42, 0.85);
-  backdrop-filter: blur(12px);
-  border: 1px solid var(--glass-border);
-  border-radius: 0.75rem;
-  margin-bottom: 1rem;
-  flex-wrap: wrap;
-}
-
-.brand-slim {
-  font-weight: 800;
-  font-size: 1.1rem;
-  background: linear-gradient(135deg, #38bdf8, #818cf8);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .header-project {
@@ -411,6 +398,7 @@ section h3 {
   border-radius: 0.5rem;
   color: var(--text-secondary);
   font-size: 0.875rem;
+  flex-shrink: 0;
 }
 
 .banner-error {
@@ -649,6 +637,8 @@ button:disabled {
   gap: 0.25rem;
   width: 100%;
   max-width: 720px;
+  max-height: 220px;
+  overflow-y: auto;
 }
 
 .scan-logs-panel {
@@ -656,6 +646,7 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: 0.75rem;
   padding: 1rem 1.25rem;
+  flex-shrink: 0;
 }
 
 .logs-header {
@@ -894,9 +885,15 @@ button:disabled {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 0.5rem;
+  flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .brand-slim {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
   font-size: 1rem;
   font-weight: 700;
   background: linear-gradient(135deg, var(--primary), #60a5fa);
@@ -904,6 +901,12 @@ button:disabled {
   -webkit-text-fill-color: transparent;
   background-clip: text;
   white-space: nowrap;
+}
+
+.brand-mark {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
 }
 
 .command-header-slim .header-project {
@@ -1216,7 +1219,8 @@ button:disabled {
   display: flex;
   flex-direction: column;
   width: 100%;
-  min-height: calc(100vh - 100px);
+  flex: 1;
+  min-height: 0;
   background: transparent;
   gap: 1rem;
 }
@@ -1234,6 +1238,7 @@ button:disabled {
   border-radius: 0.85rem;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .cockpit-left {
@@ -1310,11 +1315,12 @@ button:disabled {
 }
 
 .cockpit-center {
-  flex: 1;
+  flex: 1 1 0%;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 240px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .next-action-pill {
@@ -1325,7 +1331,8 @@ button:disabled {
   background: rgba(11, 19, 36, 0.85);
   border: 1px solid rgba(59, 130, 246, 0.25);
   border-radius: 9999px;
-  max-width: 520px;
+  max-width: 100%;
+  min-width: 0;
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
@@ -1341,11 +1348,13 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   font-weight: 500;
+  min-width: 0;
 }
 
 .cockpit-right {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .action-group {
