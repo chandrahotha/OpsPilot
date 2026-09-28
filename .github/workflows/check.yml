@@ -1,9 +1,8 @@
 name: Check
 
 on:
-  # Runs 3x/week on a schedule instead of on every push, to keep GitHub
-  # Actions minutes usage low while this repo is private (private repos draw
-  # from a monthly included-minutes pool; public repos don't). Still
+  # Runs 3x/week on a schedule rather than on every push, by choice - keeps
+  # the signal to a steady cadence instead of one run per commit. Still
   # runnable on demand from the Actions tab, and on every pull_request since
   # those are rare for a single-developer repo.
   schedule:
