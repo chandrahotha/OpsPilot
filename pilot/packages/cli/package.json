@@ -2,7 +2,7 @@
   "name": "ops-pilot",
   "version": "0.1.0",
   "description": "Detect and operate an unfamiliar project directory: services, ports, environment and diagnostics.",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "type": "commonjs",
   "bin": {
     "pilot": "bin/ops-pilot.js",

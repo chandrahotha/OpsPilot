@@ -1,40 +1,17 @@
-# Security
+# Security Policy
 
-OpsPilot executes project commands on your machine. The model is: you chose
-the project, you pressed the button, Pilot runs exactly what the project
-declares and reports what happened.
+## Reporting a Vulnerability
 
-## What Pilot runs
+If you find a security issue in OpsPilot, please report it privately rather
+than opening a public issue: use GitHub's private vulnerability reporting
+(the "Report a vulnerability" button under this repository's **Security**
+tab). Please include a description of the issue, steps to reproduce, and the
+affected version.
 
-- Only commands declared in the scanned project (startup plan steps, declared
-  scripts) or explicit Docker/database CLIs for detected integrations.
-- `run_script` rejects anything not declared in the project model.
-- Destructive database operations (reset, restore) and Kill All Nodes require
-  explicit confirmation in the GUI every time.
+We'll acknowledge your report and follow up with next steps as soon as
+possible.
 
-## Process scope
+## Supported Versions
 
-- Pilot tracks only processes it started. Stop/Stop All/Kill All Nodes
-  address tracked processes of the current project (matched by working
-  directory). Unrelated system processes are never enumerated for termination.
-- Force termination is confined to tracked labels; there is no "kill by port
-  owner" path.
-
-## What Pilot never does
-
-- Never reads `.env` secrets. The single exception is the `PORT=` key, which
-  the scanner reads from `.env`/`.env.example` (and a monorepo service's
-  parent directory) to learn the backend's configured port. Every other key
-  and every value besides the port number is never inspected, logged, or
-  displayed.
-- Never sends project data anywhere; there is no network code besides
-  localhost port probes and opening the local frontend URL in your browser.
-- The `open_frontend` path only opens `http://localhost:<detected port>`
-  after verifying something listens there.
-
-## Before publishing or sharing
-
-- Keep secrets out of the repository: no `.env` files, tokens, or private
-  paths. See `.gitignore`.
-- The Tauri Content Security Policy is currently disabled (`csp: null`);
-  re-enable a strict CSP before distributing beyond local use.
+Only the latest released version of OpsPilot is supported with security
+fixes.

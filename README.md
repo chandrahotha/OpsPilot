@@ -1,3 +1,7 @@
+<div align="center">
+  <img width="360" alt="OpsPilot" src="docs/assets/logo.png" />
+</div>
+
 # OpsPilot — Project Command Center
 
 <div align="center">
@@ -166,7 +170,7 @@ OpsPilot/
 │   └── packages/shared/ → Shared TypeScript contracts mirroring the engine
 ├── src/main.rs          → `pilot` CLI binary
 ├── tests/cli.rs         → End-to-end CLI tests against real fixtures
-├── docs/                → Architecture, detection, processes, logging, troubleshooting, security
+├── docs/                → Contributing and security policy
 └── Cargo.toml           → Rust workspace
 ```
 
@@ -211,10 +215,10 @@ OpsPilot/
 
 ## Testing
 
-- **Rust**: `cargo test --workspace` — 142 tests across core, scanner, port-manager, diagnostics, process-manager, docker, database, desktop shell, CLI.
+- **Rust**: `cargo test --workspace` — 154 tests across core, scanner, port-manager, diagnostics, process-manager, docker, database, desktop shell, CLI.
 - **TypeScript**: `npm run typecheck` — shared contracts + desktop app.
 - **Launcher**: `node --test` — 9 resolution-order tests.
-- **Total**: **151 tests**, all passing, zero compiler warnings, zero clippy warnings (`-D warnings`), `cargo fmt --check` clean.
+- **Total**: **163 tests**, all passing, zero compiler warnings, zero clippy warnings (`-D warnings`), `cargo fmt --check` clean.
 - Fixtures are created in temp directories; nothing is written outside them.
 - `npm run check` (typecheck + all tests) must pass before any PR; the `Check` workflow enforces format, clippy, typecheck, tests, and the web build on every push and PR.
 
@@ -225,14 +229,17 @@ OpsPilot/
 | Check | Result |
 |-------|--------|
 | `npm audit` | **0 vulnerabilities** |
-| `cargo audit --file Cargo.lock` | **0 vulnerabilities** (unmaintained/unsound warnings are transitive in Tauri's tree; only Tauri can clear them) |
+| GitHub Dependabot | **0 open alerts** (one was dismissed as an accepted risk: a Linux-only transitive dependency of Tauri's GTK webview backend with no available fix upstream yet — see the repo's Security tab for the documented reason) |
 
 Re-check anytime: `npm run audit` (requires `cargo install cargo-audit` once).
 
 Safety model: Pilot runs only declared project commands, tracks only processes
-it started, scopes stops to the current project, confirms destructive database
-operations and force-kills every time, never reads `.env` contents, and sends
-no data anywhere. See `docs/SECURITY.md`.
+it started, scopes stops to the current project, and confirms destructive
+database operations and force-kills every time. It reads exactly two narrow
+things out of `.env` files — a service's declared port, and (only for
+database operations) connection settings forwarded straight to the relevant
+database CLI — never anything else, and never logged or displayed. See
+`docs/SECURITY.md` to report a vulnerability.
 
 ---
 
@@ -251,15 +258,8 @@ no data anywhere. See `docs/SECURITY.md`.
 
 | Document | Covers |
 | -------- | ------ |
-| `docs/ARCHITECTURE.md` | Engine crates, Tauri shell, React frontend, CLI, data flow |
-| `docs/PROJECT-DETECTION.md` | How the scanner determines what a project contains |
-| `docs/COMMAND-CENTER.md` | The UI and how each control maps to real engine state |
-| `docs/PROCESS-MANAGEMENT.md` | Start, stop, restart, force-kill, state, and safety rules |
-| `docs/LOGGING.md` | Log collection, live logs, and the activity feed |
-| `docs/TROUBLESHOOTING.md` | Common failures and how to diagnose them |
 | `docs/CONTRIBUTING.md` | How to contribute |
-| `docs/SECURITY.md` | Process execution scope, secrets, and safety notes |
-| `Pilot Prerequisite.md` | The original product spec the implementation follows |
+| `docs/SECURITY.md` | How to report a vulnerability |
 
 ## Contributing
 
@@ -271,4 +271,10 @@ against a real project.
 
 ## License
 
-MIT
+[Apache License 2.0](LICENSE).
+
+Permissive: you're free to use, modify, and redistribute OpsPilot, including
+in closed-source or commercial projects, as long as you keep the copyright
+and license notice. It also includes an explicit patent grant from
+contributors — relevant here since this project touches process and port
+management across three operating systems.

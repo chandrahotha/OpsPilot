@@ -3,7 +3,7 @@ name = "ops-pilot"
 version = "0.1.0"
 edition = "2024"
 description = "Pilot - Cross-Platform Project Operations Launcher"
-license = "MIT"
+license = "Apache-2.0"
 
 [[bin]]
 name = "pilot"

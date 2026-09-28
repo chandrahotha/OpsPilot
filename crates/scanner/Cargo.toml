@@ -3,7 +3,7 @@ name = "pilot-scanner"
 version = "0.1.0"
 edition = "2024"
 description = "Modular project detection engine for Pilot"
-license = "MIT"
+license = "Apache-2.0"
 
 [dependencies]
 pilot-core = { path = "../core" }

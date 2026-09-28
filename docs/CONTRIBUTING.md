@@ -16,3 +16,5 @@
    push and pull request.
 6. Update the relevant file in `docs/` when behavior changes.
 7. Describe what you verified against a real project in the PR text.
+8. By submitting a contribution, you agree it is licensed under the
+   project's [Apache License 2.0](../LICENSE).
