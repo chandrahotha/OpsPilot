@@ -1,12 +1,12 @@
 {
-  "name": "ops-pilot",
+  "name": "ops_pilot",
   "version": "0.1.0",
   "description": "Detect and operate an unfamiliar project directory: services, ports, environment and diagnostics.",
   "license": "Apache-2.0",
   "type": "commonjs",
   "bin": {
     "pilot": "bin/ops-pilot.js",
-    "ops-pilot": "bin/ops-pilot.js"
+    "ops_pilot": "bin/ops-pilot.js"
   },
   "main": "lib/resolve-binary.js",
   "files": [

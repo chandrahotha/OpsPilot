@@ -60,7 +60,7 @@ it. Published by Digi Tracks.
 ### Global CLI (npm)
 
 ```bash
-npm install -g ops-pilot
+npm install -g ops_pilot
 cd my-project
 pilot
 ```

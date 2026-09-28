@@ -244,8 +244,8 @@ jobs:
           fi
           
           # Main npm package
-          if [ -f "release-assets/ops-pilot-npm/ops-pilot-*.tgz" ]; then
-            cp release-assets/ops-pilot-npm/ops-pilot-*.tgz release/
+          if [ -f "release-assets/ops-pilot-npm/ops_pilot-*.tgz" ]; then
+            cp release-assets/ops-pilot-npm/ops_pilot-*.tgz release/
           fi
           
           ls -la release/
@@ -296,7 +296,7 @@ jobs:
       - name: Publish main CLI package
         if: steps.check.outputs.has_token == 'true'
         run: |
-          TARBALL="$(find npm-package -name 'ops-pilot-*.tgz' | head -n 1)"
+          TARBALL="$(find npm-package -name 'ops_pilot-*.tgz' | head -n 1)"
           if [ -z "$TARBALL" ]; then echo "no packed tarball found"; find npm-package -type f | head -n 20; exit 1; fi
           npm publish "$TARBALL" --access public
         env:

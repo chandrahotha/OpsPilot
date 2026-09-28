@@ -1,9 +1,9 @@
-# ops-pilot
+# ops_pilot
 
 Install once, then open any project:
 
 ```bash
-npm install -g ops-pilot
+npm install -g ops_pilot
 cd my-project
 pilot
 ```
@@ -26,7 +26,7 @@ written in Rust. The launcher resolves that binary in this order:
 
 1. `OPS_PILOT_BINARY` - explicit override
 2. `@ops_pilot/cli-<platform>-<arch>` - optional platform package carrying the binary
-3. `bin/pilot[.exe]` inside this package - populated by the release pipeline
+3. `bin/pilot-<platform>-<arch>[.exe]` inside this package - populated by the release pipeline
 4. `target/{release,debug}/pilot[.exe]` in the repository - development builds
 
 If none of them exists, the launcher prints exactly what it searched and how to

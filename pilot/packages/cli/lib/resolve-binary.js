@@ -8,7 +8,7 @@
  *
  *   1. OPS_PILOT_BINARY      - explicit override, for unusual setups and tests
  *   2. @ops_pilot/cli-<platform>-<arch>  - optional platform package (the way a
- *      published release ships the native binary, `npm i -g ops-pilot @ops_pilot/cli-win32-x64`)
+ *      published release ships the native binary, `npm i -g ops_pilot @ops_pilot/cli-win32-x64`)
  *   3. <package>/bin/pilot-<platform>-<arch>[.exe] - binary bundled into the package by CI at publish time
  *   4. <repo>/target/{release,debug}/pilot[.exe] - development builds, searched upwards
  *
@@ -123,7 +123,7 @@ function resolveBinary(options = {}) {
   searched.push(bundled);
 
   if (exists(bundled)) {
-    return { binary: bundled, source: 'bundled in ops-pilot' };
+    return { binary: bundled, source: 'bundled in ops_pilot' };
   }
 
   const development = developmentBinaryPaths(packageRoot, platform);
@@ -142,7 +142,7 @@ function resolveBinary(options = {}) {
       'Searched:',
       ...searched.map((candidate) => `  - ${candidate}`),
       '',
-      'Install a published build (npm install -g ops-pilot) or build it from source:',
+      'Install a published build (npm install -g ops_pilot) or build it from source:',
       '  cargo build --release --bin pilot',
     ].join('\n'),
     searched,
