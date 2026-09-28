@@ -1,8 +1,7 @@
 //! Pilot Database Manager - Database operations.
 //!
-//! Phase 6: Real database operations via Prisma, Django, Alembic, and raw PostgreSQL.
-//! Destructive operations must always be confirmed by the user first
-//! ("Pilot Prerequisite.md" section 12).
+//! Real database operations via Prisma, Django, Alembic, and raw PostgreSQL.
+//! Destructive operations must always be confirmed by the user first.
 
 use pilot_process_manager::{
     LocalProcessManager, ProcessManager, ProcessOutcome, ProcessRequest, ProcessState,
@@ -176,10 +175,12 @@ pub struct DatabaseOperationHandle {
 impl DatabaseOperationHandle {
     /// Wait for the operation to complete, blocking until done
     pub fn wait(self) -> DatabaseOutcome {
-        self.receiver.recv().unwrap_or_else(|_| DatabaseOutcome::Error {
-            message: "operation channel disconnected".to_string(),
-            output: None,
-        })
+        self.receiver
+            .recv()
+            .unwrap_or_else(|_| DatabaseOutcome::Error {
+                message: "operation channel disconnected".to_string(),
+                output: None,
+            })
     }
 
     /// Try to get the result without blocking
@@ -328,7 +329,8 @@ impl DatabaseManager {
                         ))
                     } else {
                         Err(DatabaseOutcome::NotImplemented {
-                            reason: "Backup not implemented for this database type with Prisma".to_string(),
+                            reason: "Backup not implemented for this database type with Prisma"
+                                .to_string(),
                         })
                     }
                 } else {
@@ -347,7 +349,8 @@ impl DatabaseManager {
                         ))
                     } else {
                         Err(DatabaseOutcome::NotImplemented {
-                            reason: "Restore not implemented for this database type with Prisma".to_string(),
+                            reason: "Restore not implemented for this database type with Prisma"
+                                .to_string(),
                         })
                     }
                 } else {
@@ -370,7 +373,9 @@ impl DatabaseManager {
         match operation {
             DatabaseOperation::Status => Ok(format!("{} {} check --deploy", python, manage_py)),
             DatabaseOperation::Migrate => Ok(format!("{} {} migrate --noinput", python, manage_py)),
-            DatabaseOperation::Seed => Ok(format!("{} {} loaddata fixtures/*.json", python, manage_py)),
+            DatabaseOperation::Seed => {
+                Ok(format!("{} {} loaddata fixtures/*.json", python, manage_py))
+            }
             DatabaseOperation::Reset => Ok(format!(
                 "{} {} flush --noinput && {} {} migrate --noinput",
                 python, manage_py, python, manage_py
@@ -384,7 +389,8 @@ impl DatabaseManager {
                         ))
                     } else {
                         Err(DatabaseOutcome::NotImplemented {
-                            reason: "Backup not implemented for this database type with Django".to_string(),
+                            reason: "Backup not implemented for this database type with Django"
+                                .to_string(),
                         })
                     }
                 } else {
@@ -403,7 +409,8 @@ impl DatabaseManager {
                         ))
                     } else {
                         Err(DatabaseOutcome::NotImplemented {
-                            reason: "Restore not implemented for this database type with Django".to_string(),
+                            reason: "Restore not implemented for this database type with Django"
+                                .to_string(),
                         })
                     }
                 } else {
@@ -426,7 +433,9 @@ impl DatabaseManager {
             DatabaseOperation::Seed => Err(DatabaseOutcome::NotImplemented {
                 reason: "Alembic doesn't have built-in seeding support".to_string(),
             }),
-            DatabaseOperation::Reset => Ok("alembic downgrade base && alembic upgrade head".to_string()),
+            DatabaseOperation::Reset => {
+                Ok("alembic downgrade base && alembic upgrade head".to_string())
+            }
             DatabaseOperation::Backup => {
                 if let Some(db) = &_integration.database {
                     if matches!(db.r#type, DatabaseType::PostgreSQL) {
@@ -436,7 +445,8 @@ impl DatabaseManager {
                         ))
                     } else {
                         Err(DatabaseOutcome::NotImplemented {
-                            reason: "Backup not implemented for this database type with Alembic".to_string(),
+                            reason: "Backup not implemented for this database type with Alembic"
+                                .to_string(),
                         })
                     }
                 } else {
@@ -455,7 +465,8 @@ impl DatabaseManager {
                         ))
                     } else {
                         Err(DatabaseOutcome::NotImplemented {
-                            reason: "Restore not implemented for this database type with Alembic".to_string(),
+                            reason: "Restore not implemented for this database type with Alembic"
+                                .to_string(),
                         })
                     }
                 } else {
@@ -476,7 +487,8 @@ impl DatabaseManager {
             Some(db) => db,
             None => {
                 return Err(DatabaseOutcome::Error {
-                    message: "Database connection info required for PostgreSQL operations".to_string(),
+                    message: "Database connection info required for PostgreSQL operations"
+                        .to_string(),
                     output: None,
                 });
             }
@@ -494,7 +506,9 @@ impl DatabaseManager {
                 db.host, db.port, db.name
             )),
             DatabaseOperation::Migrate => Err(DatabaseOutcome::NotImplemented {
-                reason: "Raw PostgreSQL doesn't have a migration system; use Prisma, Django, or Alembic".to_string(),
+                reason:
+                    "Raw PostgreSQL doesn't have a migration system; use Prisma, Django, or Alembic"
+                        .to_string(),
             }),
             DatabaseOperation::Seed => Err(DatabaseOutcome::NotImplemented {
                 reason: "Raw PostgreSQL doesn't have a seeding system".to_string(),
@@ -544,12 +558,12 @@ impl DatabaseManager {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() {
-                    let skip = path
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .is_some_and(|name| {
-                            crate::DatabaseManager::SQLITE_SKIPPED_DIRS.contains(&name)
-                        });
+                    let skip =
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| {
+                                crate::DatabaseManager::SQLITE_SKIPPED_DIRS.contains(&name)
+                            });
                     if !skip {
                         visit(&path, depth + 1, out);
                     }
@@ -696,16 +710,6 @@ impl DatabaseManager {
     /// The process state is polled until it exits (or the timeout elapses)
     /// instead of sleeping a fixed amount of time, and the trailing log
     /// output is captured so the caller sees what actually happened.
-    #[allow(dead_code)]
-    fn run_command(
-        &self,
-        integration: &DatabaseIntegration,
-        command: &str,
-        operation: DatabaseOperation,
-    ) -> DatabaseOutcome {
-        Self::run_command_impl(&self.process_manager, integration, command, operation)
-    }
-
     fn run_command_impl(
         process_manager: &LocalProcessManager,
         integration: &DatabaseIntegration,
@@ -716,7 +720,8 @@ impl DatabaseManager {
             format!("db-{}", operation.as_str()),
             command.to_string(),
             integration.project_dir.clone(),
-        );
+        )
+        .with_env(integration.env.clone());
 
         let outcome = process_manager.start(&request);
 
@@ -759,13 +764,19 @@ impl DatabaseManager {
                                     "lost track of the {} process ({label})",
                                     operation.as_str()
                                 ),
-                                output: Some(Self::tail_logs_static(process_manager, &request.label)),
+                                output: Some(Self::tail_logs_static(
+                                    process_manager,
+                                    &request.label,
+                                )),
                             };
                         }
                         ProcessOutcome::Error(e) => {
                             return DatabaseOutcome::Error {
                                 message: e,
-                                output: Some(Self::tail_logs_static(process_manager, &request.label)),
+                                output: Some(Self::tail_logs_static(
+                                    process_manager,
+                                    &request.label,
+                                )),
                             };
                         }
                         _ => {}
@@ -802,11 +813,6 @@ impl DatabaseManager {
     }
 
     /// Last lines of captured stdout/stderr for a database operation.
-    #[allow(dead_code)]
-    fn tail_logs(&self, label: &str) -> String {
-        Self::tail_logs_static(&self.process_manager, label)
-    }
-
     fn tail_logs_static(process_manager: &LocalProcessManager, label: &str) -> String {
         process_manager
             .log_buffer(label)
@@ -865,7 +871,8 @@ fn missing_tool_hint(command: &str, logs: &str) -> Option<String> {
     let has_missing_pattern = missing_patterns.iter().any(|p| logs_lower.contains(p));
 
     // Also check generic patterns but only if the tool name appears nearby
-    let generic_missing = (logs_lower.contains("command not found") || logs_lower.contains("not recognized as an internal or external command"))
+    let generic_missing = (logs_lower.contains("command not found")
+        || logs_lower.contains("not recognized as an internal or external command"))
         && logs_lower.contains(&tool_lower);
 
     if !has_missing_pattern && !generic_missing {

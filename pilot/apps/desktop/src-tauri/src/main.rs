@@ -134,12 +134,26 @@ fn get_startup_plan(path: Option<String>) -> Result<StartupPlanResponse, String>
 /// Start a project service (process lifecycle - phase 4)
 ///
 /// The `service` argument must be a service *key* (`frontend`, `backend`,
-/// `app`) as reported by `get_status`, not the human-readable label.
+/// `app`) as reported by `get_status`, not the human-readable label — it is
+/// always used as the tracked process *label*, so Stop/Restart (which only
+/// ever address a service by its key) keep working no matter which command
+/// actually ran.
+///
+/// `command` names a declared project command (`model.commands[].name`) to
+/// run instead of the service's own startup-plan step, for services the
+/// plan cannot start directly (no detected default command) where the GUI
+/// falls back to an assigned/matched script. When omitted, `service` is
+/// also used as the command name, preserving the previous behavior.
+///
 /// On failure the error names the service, the attempted command, the
 /// working directory and the plan warnings, so the GUI can show the user
 /// exactly why nothing started instead of failing silently.
 #[command]
-fn start_project(path: Option<String>, service: String) -> Result<String, String> {
+fn start_project(
+    path: Option<String>,
+    service: String,
+    command: Option<String>,
+) -> Result<String, String> {
     let path = resolve_project_path(path)?;
     let scan = scan_project(&path);
     let model = scan
@@ -150,7 +164,11 @@ fn start_project(path: Option<String>, service: String) -> Result<String, String
     let step_storage;
     let step = if let Some(s) = plan.steps.iter().find(|s| s.service == service) {
         s
-    } else if let Some(cmd) = model.commands.iter().find(|c| c.name == service) {
+    } else if let Some(cmd) = model
+        .commands
+        .iter()
+        .find(|c| c.name == command.as_deref().unwrap_or(service.as_str()))
+    {
         step_storage = StartupStep::new(&service, &cmd.command, &path);
         &step_storage
     } else {
@@ -186,8 +204,10 @@ fn start_project(path: Option<String>, service: String) -> Result<String, String
         && !path_belongs_to_project(&existing.working_directory, &path)
     {
         return Err(format!(
-            "{} is already running for another project ({}) with pid {:?}; stop it there first",
-            service, existing.working_directory, existing.pid
+            "{} is already running for another project ({}) with pid {}; stop it there first",
+            service,
+            existing.working_directory,
+            fmt_pid(existing.pid)
         ));
     }
     // Pre-flight: if the service port is held by a process Pilot did not
@@ -213,8 +233,9 @@ fn start_project(path: Option<String>, service: String) -> Result<String, String
     }
     match manager.start(&request) {
         ProcessOutcome::Started(snapshot) => Ok(format!(
-            "Started {} (pid {:?})",
-            snapshot.label, snapshot.pid
+            "Started {} (pid {})",
+            snapshot.label,
+            fmt_pid(snapshot.pid)
         )),
         ProcessOutcome::Error(e) => Err(format!(
             "Failed to start {} (command `{}` in `{}`): {e}",
@@ -235,6 +256,19 @@ fn declared_port(model: &ProjectModel, service: &str) -> Option<u16> {
         "database" => model.database.as_ref().map(|info| info.port),
         _ => None,
     }
+}
+
+/// Render a process id for a user-facing message.
+///
+/// `ProcessSnapshot::pid` is `Option<u32>` (absent once a process has
+/// stopped), but every message that reports one is built right after a
+/// successful start, when it is always `Some`. Formatting it with `{:?}`
+/// would print the Rust debug form ("Some(1234)") straight into the GUI;
+/// this renders the number alone, or "unknown" in the defensive case where
+/// it is not available.
+fn fmt_pid(pid: Option<u32>) -> String {
+    pid.map(|pid| pid.to_string())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Pre-flight blocker for starting a service whose port is held by a
@@ -321,8 +355,9 @@ fn restart_project(service: String) -> Result<String, String> {
     let manager = get_process_manager();
     match manager.restart(&service) {
         ProcessOutcome::Started(snapshot) => Ok(format!(
-            "Restarted {} (pid {:?})",
-            snapshot.label, snapshot.pid
+            "Restarted {} (pid {})",
+            snapshot.label,
+            fmt_pid(snapshot.pid)
         )),
         ProcessOutcome::NotFound(label) => Err(format!(
             "Service {} not found or not started by Pilot",
@@ -545,26 +580,24 @@ fn database_integration_for(
             Some("postgresql") | Some("postgres") => IntegrationType::Postgres,
             _ => IntegrationType::Sqlite,
         },
-        _ => {
-            match db_type.as_deref() {
-                Some("postgresql") | Some("postgres") => IntegrationType::Postgres,
-                Some(other) => {
-                    return Err(DatabaseOutcome::NotImplemented {
-                        reason: format!(
-                            "no migration integration for database type '{other}' (supported: prisma, django, alembic, kysely/sqlite, postgresql)"
-                        ),
-                    });
-                }
-                None => {
-                    let detected = orm.as_deref().unwrap_or("none");
-                    return Err(DatabaseOutcome::NotImplemented {
-                        reason: format!(
-                            "no migration integration for ORM '{detected}' (supported: prisma, django, alembic, kysely/sqlite)"
-                        ),
-                    });
-                }
+        _ => match db_type.as_deref() {
+            Some("postgresql") | Some("postgres") => IntegrationType::Postgres,
+            Some(other) => {
+                return Err(DatabaseOutcome::NotImplemented {
+                    reason: format!(
+                        "no migration integration for database type '{other}' (supported: prisma, django, alembic, kysely/sqlite, postgresql)"
+                    ),
+                });
             }
-        }
+            None => {
+                let detected = orm.as_deref().unwrap_or("none");
+                return Err(DatabaseOutcome::NotImplemented {
+                    reason: format!(
+                        "no migration integration for ORM '{detected}' (supported: prisma, django, alembic, kysely/sqlite)"
+                    ),
+                });
+            }
+        },
     };
 
     let database = model.database.as_ref().and_then(|db| {
@@ -865,8 +898,9 @@ fn start_all_project(path: Option<String>) -> Result<String, String> {
             && path_belongs_to_project(&existing.working_directory, &path)
         {
             lines.push(format!(
-                "{} already running (pid {:?}); skipped",
-                step.service, existing.pid
+                "{} already running (pid {}); skipped",
+                step.service,
+                fmt_pid(existing.pid)
             ));
             continue;
         }
@@ -880,8 +914,9 @@ fn start_all_project(path: Option<String>) -> Result<String, String> {
         let request = ProcessRequest::new(&step.service, &step.command, &step.working_directory);
         match manager.start(&request) {
             ProcessOutcome::Started(snapshot) => lines.push(format!(
-                "started {} (pid {:?})",
-                snapshot.label, snapshot.pid
+                "started {} (pid {})",
+                snapshot.label,
+                fmt_pid(snapshot.pid)
             )),
             ProcessOutcome::Error(error) => {
                 if error.contains("already running") {
@@ -984,16 +1019,17 @@ fn run_script(path: Option<String>, name: String) -> Result<String, String> {
         && existing.state == ProcessState::Running
     {
         return Err(format!(
-            "script '{name}' is already running (pid {:?}); stop it first",
-            existing.pid
+            "script '{name}' is already running (pid {}); stop it first",
+            fmt_pid(existing.pid)
         ));
     }
 
     let request = ProcessRequest::new(&label, &declared.command, &path);
     match manager.start(&request) {
         ProcessOutcome::Started(snapshot) => Ok(format!(
-            "Started script '{name}' (`{}`) with pid {:?}",
-            snapshot.command, snapshot.pid
+            "Started script '{name}' (`{}`) with pid {}",
+            snapshot.command,
+            fmt_pid(snapshot.pid)
         )),
         ProcessOutcome::Error(error) => Err(format!("script '{name}' failed to start: {error}")),
         _ => Err(format!("script '{name}' failed: unexpected outcome")),

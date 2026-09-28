@@ -1,8 +1,7 @@
 //! Shell and process-tree handling for the current platform.
 //!
 //! Every platform difference lives here: the rest of the engine only asks for a
-//! shell command or a stop command and does not care which OS is active
-//! ("Pilot Prerequisite.md" section 20).
+//! shell command or a stop command and does not care which OS is active.
 
 use std::process::Command;
 
@@ -161,8 +160,12 @@ mod win_api {
             dw_flags: u32,
             th32_process_id: u32,
         ) -> *mut std::ffi::c_void;
-        pub fn Process32FirstW(h_snapshot: *mut std::ffi::c_void, lppe: *mut PROCESSENTRY32W) -> i32;
-        pub fn Process32NextW(h_snapshot: *mut std::ffi::c_void, lppe: *mut PROCESSENTRY32W) -> i32;
+        pub fn Process32FirstW(
+            h_snapshot: *mut std::ffi::c_void,
+            lppe: *mut PROCESSENTRY32W,
+        ) -> i32;
+        pub fn Process32NextW(h_snapshot: *mut std::ffi::c_void, lppe: *mut PROCESSENTRY32W)
+        -> i32;
         pub fn CloseHandle(h_object: *mut std::ffi::c_void) -> i32;
     }
 }
@@ -341,7 +344,46 @@ pub fn get_descendant_pids(root_pid: u32) -> Vec<u32> {
         descendants
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        use std::collections::{HashMap, HashSet, VecDeque};
+
+        // macOS has no /proc; `ps -Ao pid=,ppid=` (BSD ps, no GNU-only flags)
+        // lists every process on the system with its parent, which is enough
+        // to walk the same parent-to-children tree the Linux branch builds.
+        let mut parent_to_children: HashMap<u32, Vec<u32>> = HashMap::new();
+        if let Ok(output) = Command::new("ps").args(["-Ao", "pid=,ppid="]).output() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            for line in text.lines() {
+                let mut parts = line.split_whitespace();
+                let (Some(pid_str), Some(ppid_str)) = (parts.next(), parts.next()) else {
+                    continue;
+                };
+                if let (Ok(pid), Ok(ppid)) = (pid_str.parse::<u32>(), ppid_str.parse::<u32>()) {
+                    parent_to_children.entry(ppid).or_default().push(pid);
+                }
+            }
+        }
+
+        let mut descendants = Vec::new();
+        let mut queue = VecDeque::new();
+        let mut visited = HashSet::new();
+        queue.push_back(root_pid);
+        visited.insert(root_pid);
+        while let Some(current) = queue.pop_front() {
+            if let Some(children) = parent_to_children.get(&current) {
+                for &child in children {
+                    if visited.insert(child) {
+                        descendants.push(child);
+                        queue.push_back(child);
+                    }
+                }
+            }
+        }
+        descendants
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = root_pid;
         Vec::new()

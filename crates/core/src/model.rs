@@ -3,8 +3,7 @@
 // All detectors must produce a normalized internal project model.
 // The GUI should consume this model instead of directly scanning the filesystem.
 //
-// The serialized form is the normalized project model defined in
-// "Pilot Prerequisite.md" section 7: camelCase JSON keys, e.g.
+// The serialized form uses camelCase JSON keys, e.g.
 //
 // {
 //   "project":     { "name": "my-ai-app", "path": "..." },
@@ -112,9 +111,9 @@ impl OrmInfo {
 
 /// A command the project declares, ready to be executed by Pilot.
 ///
-/// Pilot only runs commands it can show the user first
-/// ("Pilot Prerequisite.md" sections 8 and 19): every entry records where it was
-/// found, and no command is invented from a detected framework alone.
+/// Pilot only runs commands it can show the user first: every entry records
+/// where it was found, and no command is invented from a detected framework
+/// alone.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandInfo {

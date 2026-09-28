@@ -33,10 +33,21 @@ pub fn scan_with_detectors(
 
     // 2. Scan standard monorepo / subfolder paths if directories exist
     const SUBDIRS: &[&str] = &[
-        "frontend", "client", "web", "ui",
-        "backend", "server", "api", "srv",
-        "apps/web", "apps/client", "apps/frontend", "apps/ui",
-        "apps/api", "apps/backend", "apps/server",
+        "frontend",
+        "client",
+        "web",
+        "ui",
+        "backend",
+        "server",
+        "api",
+        "srv",
+        "apps/web",
+        "apps/client",
+        "apps/frontend",
+        "apps/ui",
+        "apps/api",
+        "apps/backend",
+        "apps/server",
     ];
 
     for rel_sub in SUBDIRS {
@@ -50,8 +61,7 @@ pub fn scan_with_detectors(
                 continue;
             }
 
-            let mut sub_model =
-                ProjectModel::new(project_name_from_path(&sub_str), &*sub_str);
+            let mut sub_model = ProjectModel::new(project_name_from_path(&sub_str), &*sub_str);
             let sub_evidence = detector.apply(&sub_str, &mut sub_model);
 
             if model.frontend.is_none() && sub_model.frontend.is_some() {
@@ -90,8 +100,7 @@ pub fn scan_with_detectors(
                 cmd.source = format!("{rel_sub}/{}", cmd.source);
                 if is_be && (cmd.name == "dev" || cmd.name == "start" || cmd.name == "serve") {
                     cmd.name = format!("{}:backend", cmd.name);
-                } else if is_fe
-                    && (cmd.name == "dev" || cmd.name == "start" || cmd.name == "serve")
+                } else if is_fe && (cmd.name == "dev" || cmd.name == "start" || cmd.name == "serve")
                 {
                     cmd.name = format!("{}:frontend", cmd.name);
                 }

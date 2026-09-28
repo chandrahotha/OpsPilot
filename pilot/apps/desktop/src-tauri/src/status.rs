@@ -1,9 +1,8 @@
 //! Project service status derived from what Pilot can actually observe.
 //!
 //! Pilot reports a service as running only when something is really listening on
-//! the port the project declares (see "Pilot Prerequisite.md" section 17: do not
-//! claim certainty when evidence is insufficient). Process-level state arrives
-//! with the process lifecycle phase.
+//! the port the project declares — never claiming certainty when evidence is
+//! insufficient. Process-level state arrives with the process lifecycle phase.
 
 use pilot_core::ProjectModel;
 use pilot_port_manager::inspect_port;

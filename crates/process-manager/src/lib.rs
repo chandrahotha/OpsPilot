@@ -1,8 +1,7 @@
 //! Pilot Process Manager - Process lifecycle operations.
 //!
-//! The lifecycle is real as of phase 4: Pilot starts, tracks, captures and stops
-//! project processes, and only ever the ones it started itself
-//! ("Pilot Prerequisite.md" section 11).
+//! Pilot starts, tracks, captures and stops project processes, and only ever
+//! the ones it started itself.
 //!
 //! Module map:
 //!
@@ -40,6 +39,7 @@ pub use registry::{ProcessRecord, ProcessSnapshot, ProcessState};
 pub use unified_log::UnifiedLogStream;
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// A process the user asked Pilot to run
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,6 +51,10 @@ pub struct ProcessRequest {
     pub command: String,
     /// Working directory for the process
     pub working_directory: String,
+    /// Extra environment variables set on top of the inherited environment
+    /// (e.g. database connection settings read from the project's `.env`)
+    #[serde(default)]
+    pub env: HashMap<String, String>,
 }
 
 impl ProcessRequest {
@@ -64,6 +68,13 @@ impl ProcessRequest {
             label: label.into(),
             command: command.into(),
             working_directory: directory.into(),
+            env: HashMap::new(),
         }
+    }
+
+    /// Attach extra environment variables to this request
+    pub fn with_env(mut self, env: HashMap<String, String>) -> Self {
+        self.env = env;
+        self
     }
 }

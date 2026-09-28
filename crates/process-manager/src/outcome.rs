@@ -43,11 +43,7 @@ mod tests {
     use crate::registry::ProcessState;
 
     fn snapshot() -> ProcessSnapshot {
-        let request = ProcessRequest {
-            label: "frontend".to_string(),
-            command: "npm run dev".to_string(),
-            working_directory: ".".to_string(),
-        };
+        let request = ProcessRequest::new("frontend", "npm run dev", ".");
 
         crate::registry::ProcessRecord::failed(
             request,

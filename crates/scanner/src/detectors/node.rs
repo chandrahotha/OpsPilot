@@ -146,7 +146,11 @@ fn collect_commands(
     };
 
     // First process standard run and support scripts in precedence order
-    let standard_keys: Vec<&str> = RUN_SCRIPTS.iter().chain(SUPPORT_SCRIPTS.iter()).copied().collect();
+    let standard_keys: Vec<&str> = RUN_SCRIPTS
+        .iter()
+        .chain(SUPPORT_SCRIPTS.iter())
+        .copied()
+        .collect();
 
     // Collect all script names, starting with standard ones, then all other declared scripts
     let mut all_script_keys: Vec<&str> = standard_keys.clone();
@@ -359,7 +363,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pilot-node-env-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("fixture dir must be created");
-        std::fs::write(dir.join(".env.example"), "PORT=6041\nJWT_SECRET=irrelevant\n").expect("env must be written");
+        std::fs::write(
+            dir.join(".env.example"),
+            "PORT=6041\nJWT_SECRET=irrelevant\n",
+        )
+        .expect("env must be written");
 
         let path = dir.to_string_lossy().to_string();
         assert_eq!(port_from_env(&path), Some(6041));
@@ -370,7 +378,11 @@ mod tests {
 
         // Comments and secrets never leak into port detection: the commented
         // PORT in `.env` is ignored, so `.env.example` still provides 6041.
-        std::fs::write(dir.join(".env"), "# PORT=9999\nDATABASE_URL=postgres://x:5432/db\n").expect("env must be written");
+        std::fs::write(
+            dir.join(".env"),
+            "# PORT=9999\nDATABASE_URL=postgres://x:5432/db\n",
+        )
+        .expect("env must be written");
         assert_eq!(port_from_env(&path), Some(6041));
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -405,7 +417,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pilot-node-vite-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("fixture dir must be created");
-        std::fs::write(dir.join("vite.config.ts"), "export default defineConfig({\n  server: {\n    port: 6040,\n  },\n});\n").expect("config must be written");
+        std::fs::write(
+            dir.join("vite.config.ts"),
+            "export default defineConfig({\n  server: {\n    port: 6040,\n  },\n});\n",
+        )
+        .expect("config must be written");
 
         let path = dir.to_string_lossy().to_string();
         assert_eq!(port_from_vite_config(&path), Some(6040));

@@ -5,7 +5,7 @@ use crate::log_buffer::LogBuffer;
 use crate::outcome::ProcessOutcome;
 use crate::platform::{current_platform, kill_tree_command, shell_command, stop_tree_command};
 use crate::registry::{ProcessRecord, ProcessSnapshot, ProcessState};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -62,6 +62,28 @@ pub trait ProcessManager: Send + Sync {
 pub struct LocalProcessManager {
     records: Mutex<HashMap<String, Arc<ProcessRecord>>>,
     history: OperationHistory,
+    /// Labels with a start/stop/restart/kill currently in progress, so two
+    /// concurrent lifecycle operations on the same label (e.g. a double-click
+    /// Restart, or Restart racing a manual Stop) serialize instead of racing.
+    in_flight: Mutex<HashSet<String>>,
+}
+
+/// RAII marker that a lifecycle operation is in progress for one label.
+/// Dropping it (including on early return) frees the label for the next
+/// operation.
+struct LabelGuard<'a> {
+    manager: &'a LocalProcessManager,
+    label: String,
+}
+
+impl Drop for LabelGuard<'_> {
+    fn drop(&mut self) {
+        self.manager
+            .in_flight
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.label);
+    }
 }
 
 impl Default for LocalProcessManager {
@@ -87,6 +109,7 @@ impl Clone for LocalProcessManager {
                     .collect(),
             ),
             history: self.history.clone(),
+            in_flight: Mutex::new(HashSet::new()),
         }
     }
 }
@@ -97,7 +120,53 @@ impl LocalProcessManager {
         LocalProcessManager {
             records: Mutex::new(HashMap::new()),
             history: OperationHistory::default(),
+            in_flight: Mutex::new(HashSet::new()),
         }
+    }
+
+    /// Claim exclusive rights to run a lifecycle operation for `label`.
+    /// Returns an error instead of blocking, matching the existing
+    /// "already running; stop it first" style of reporting a conflict.
+    fn begin_operation(&self, label: &str) -> Result<LabelGuard<'_>, String> {
+        let mut in_flight = self
+            .in_flight
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        if !in_flight.insert(label.to_string()) {
+            return Err(format!(
+                "another operation is already in progress for {label}; try again once it finishes"
+            ));
+        }
+
+        Ok(LabelGuard {
+            manager: self,
+            label: label.to_string(),
+        })
+    }
+
+    /// Fresh, authoritative liveness check on the child handle Pilot itself
+    /// opened. `record.state()` only refreshes every `POLL_INTERVAL` via the
+    /// watcher thread, so a process that exited in that window is still
+    /// reported "running" for up to that long; sending a tree-kill signal to
+    /// its pid in that gap risks hitting an unrelated process if the OS has
+    /// already reused the pid. `try_wait()` on the handle Pilot itself holds
+    /// carries no such risk, since it identifies the process by handle, not
+    /// by pid lookup. Updates state/exit code when it finds an exit, and
+    /// reports whether it did.
+    fn already_exited(record: &Arc<ProcessRecord>) -> bool {
+        let mut fields = record.lock();
+        let Some(child) = fields.child().as_mut() else {
+            return false;
+        };
+        let Some(status) = child.try_wait().ok().flatten() else {
+            return false;
+        };
+        *fields.exit_code_mut() = status.code();
+        if fields.state() == ProcessState::Running {
+            *fields.state_mut() = ProcessState::Exited;
+        }
+        true
     }
 
     /// Stop a tracked process, waiting for the tree to exit
@@ -108,6 +177,13 @@ impl LocalProcessManager {
             let detail = "was not running anymore".to_string();
             record.set_state(ProcessState::Exited);
 
+            let snapshot = record.snapshot();
+
+            return ProcessOutcome::Stopped(ProcessSnapshot { detail, ..snapshot });
+        }
+
+        if Self::already_exited(record) {
+            let detail = "exited just before it could be stopped".to_string();
             let snapshot = record.snapshot();
 
             return ProcessOutcome::Stopped(ProcessSnapshot { detail, ..snapshot });
@@ -177,17 +253,21 @@ impl LocalProcessManager {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Remove stopped/exited records to prevent memory leaks.
+    /// Remove deliberately-stopped records to prevent memory leaks.
     ///
-    /// Failed records are retained so the GUI can display "could not be started"
-    /// without racing against the next list() call. They are removed once the
-    /// service is restarted (start_process overwrites the record).
+    /// Failed and Exited records are retained so the GUI can display "could
+    /// not be started"/exit details, and so a caller polling `status()` for a
+    /// one-shot command (e.g. a database migrate/reset) to reach `Exited`
+    /// cannot have the record evicted out from under it by a concurrent
+    /// `list()` call landing in the gap between the watcher marking the
+    /// process Exited and the poller reading that state. They are removed
+    /// once the label is started again (start_process overwrites the record).
     fn cleanup_records(&self) {
         let mut records = self.lock_records();
         records.retain(|_, record| {
             matches!(
                 record.state(),
-                ProcessState::Running | ProcessState::Failed
+                ProcessState::Running | ProcessState::Failed | ProcessState::Exited
             )
         });
     }
@@ -216,6 +296,7 @@ impl LocalProcessManager {
         let mut shell = shell_command(&request.command);
         shell
             .current_dir(&request.working_directory)
+            .envs(&request.env)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -355,6 +436,13 @@ impl LocalProcessManager {
             return ProcessOutcome::Stopped(ProcessSnapshot { detail, ..snapshot });
         }
 
+        if Self::already_exited(record) {
+            let detail = "exited just before it could be force terminated".to_string();
+            let snapshot = record.snapshot();
+
+            return ProcessOutcome::Stopped(ProcessSnapshot { detail, ..snapshot });
+        }
+
         record
             .logs
             .push_system(&label, format!("force terminating (pid {})", record.pid));
@@ -394,6 +482,11 @@ impl LocalProcessManager {
 
 impl ProcessManager for LocalProcessManager {
     fn start(&self, request: &ProcessRequest) -> ProcessOutcome {
+        let _guard = match self.begin_operation(&request.label) {
+            Ok(guard) => guard,
+            Err(error) => return ProcessOutcome::Error(error),
+        };
+
         match self.start_process(request) {
             Ok(record) => ProcessOutcome::Started(record.snapshot()),
             Err(error) => ProcessOutcome::Error(error),
@@ -401,6 +494,11 @@ impl ProcessManager for LocalProcessManager {
     }
 
     fn stop(&self, label: &str) -> ProcessOutcome {
+        let _guard = match self.begin_operation(label) {
+            Ok(guard) => guard,
+            Err(error) => return ProcessOutcome::Error(error),
+        };
+
         let record = {
             let records = self.lock_records();
 
@@ -414,6 +512,11 @@ impl ProcessManager for LocalProcessManager {
     }
 
     fn kill(&self, label: &str) -> ProcessOutcome {
+        let _guard = match self.begin_operation(label) {
+            Ok(guard) => guard,
+            Err(error) => return ProcessOutcome::Error(error),
+        };
+
         let record = {
             let records = self.lock_records();
 
@@ -426,23 +529,38 @@ impl ProcessManager for LocalProcessManager {
         self.kill_process(&record)
     }
 
+    /// Stop then start the same label as one atomic operation (guarded by
+    /// `begin_operation` for the whole sequence): calls the unguarded
+    /// `stop_process`/`start_process` helpers directly rather than `self.stop`/
+    /// `self.start`, which would try to claim the same label again and fail.
+    /// Without this, two concurrent restarts could both observe the process
+    /// as stopped and each spawn their own replacement, leaving one untracked.
     fn restart(&self, label: &str) -> ProcessOutcome {
-        let request = {
+        let _guard = match self.begin_operation(label) {
+            Ok(guard) => guard,
+            Err(error) => return ProcessOutcome::Error(error),
+        };
+
+        let (existing, request) = {
             let records = self.lock_records();
 
             match records.get(label) {
-                Some(record) => record.request.clone(),
+                Some(record) => (Some(Arc::clone(record)), record.request.clone()),
                 None => return ProcessOutcome::NotFound(label.to_string()),
             }
         };
 
-        let stopped = self.stop(label);
-
-        if !stopped.is_ok() {
-            return stopped;
+        if let Some(record) = existing {
+            let stopped = self.stop_process(&record);
+            if !stopped.is_ok() {
+                return stopped;
+            }
         }
 
-        self.start(&request)
+        match self.start_process(&request) {
+            Ok(record) => ProcessOutcome::Started(record.snapshot()),
+            Err(error) => ProcessOutcome::Error(error),
+        }
     }
 
     fn status(&self, label: &str) -> ProcessOutcome {

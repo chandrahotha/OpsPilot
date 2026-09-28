@@ -87,12 +87,7 @@ pub fn build_startup_plan(model: &ProjectModel, project_path: &str) -> StartupPl
             .commands
             .iter()
             .find(|c| is_frontend_command(&c.name))
-            .or_else(|| {
-                model
-                    .commands
-                    .iter()
-                    .find(|c| is_run_command(&c.name))
-            })
+            .or_else(|| model.commands.iter().find(|c| is_run_command(&c.name)))
     } else {
         None
     };
@@ -103,15 +98,11 @@ pub fn build_startup_plan(model: &ProjectModel, project_path: &str) -> StartupPl
             .iter()
             .find(|c| is_backend_command(&c.name) || c.source.contains("manage.py"))
             .or_else(|| {
-                model
-                    .commands
-                    .iter()
-                    .find(|c| {
-                        is_run_command(&c.name)
-                            && (model.frontend.is_none()
-                                || Some(&c.command)
-                                    != frontend_cmd_info.map(|i| &i.command))
-                    })
+                model.commands.iter().find(|c| {
+                    is_run_command(&c.name)
+                        && (model.frontend.is_none()
+                            || Some(&c.command) != frontend_cmd_info.map(|i| &i.command))
+                })
             })
     } else {
         None
@@ -136,7 +127,9 @@ pub fn build_startup_plan(model: &ProjectModel, project_path: &str) -> StartupPl
             plan.steps
                 .push(StartupStep::new("backend", info.command.clone(), work_dir));
         } else if model.frontend.is_some() && frontend_cmd_info.is_some() {
-            let cmd = frontend_cmd_info.map(|i| i.command.as_str()).unwrap_or_default();
+            let cmd = frontend_cmd_info
+                .map(|i| i.command.as_str())
+                .unwrap_or_default();
             plan.warnings.push(format!(
                 "the backend is served by the same process ({cmd}), which is why it has no separate step"
             ));
@@ -160,7 +153,8 @@ pub fn build_startup_plan(model: &ProjectModel, project_path: &str) -> StartupPl
             .map(|c| c.command.clone());
 
         if let Some(ref cmd) = app_cmd {
-            plan.steps.push(StartupStep::new("app", cmd.clone(), project_path));
+            plan.steps
+                .push(StartupStep::new("app", cmd.clone(), project_path));
         } else {
             plan.warnings.push(
                 "no startable service was detected; declare a dev/start/serve command to enable Start"

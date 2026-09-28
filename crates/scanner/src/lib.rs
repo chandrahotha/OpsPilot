@@ -6,8 +6,7 @@
 //! together produce the normalized [`ProjectModel`] defined by `pilot-core`.
 //!
 //! The scanner only inspects files. It never executes project commands, which is
-//! what makes it safe to run against an unfamiliar directory
-//! (see "Pilot Prerequisite.md" section 19).
+//! what makes it safe to run against an unfamiliar directory.
 
 use std::fs;
 use std::io;
@@ -53,8 +52,7 @@ pub fn project_name_from_path(path: &str) -> String {
 /// Resolve a user-supplied directory to an absolute, lexically cleaned path.
 ///
 /// Front ends call this before scanning so that `pilot` with no argument reports
-/// the real directory name instead of `.` (see "Pilot Prerequisite.md" section 1:
-/// `cd my-project` then `pilot`).
+/// the real directory name instead of `.` (e.g. `cd my-project` then `pilot`).
 pub fn resolve_project_path(project_path: &str) -> io::Result<String> {
     let candidate = PathBuf::from(project_path);
     let absolute = if candidate.is_absolute() {

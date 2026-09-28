@@ -21,7 +21,11 @@ impl Detector for RustDetector {
 
     fn apply(&self, _project_path: &str, model: &mut ProjectModel) -> Vec<String> {
         let mut evidence = vec!["Cargo.toml (cargo)".to_string()];
-        if !model.commands.iter().any(|c| c.name == "dev" || c.name == "start") {
+        if !model
+            .commands
+            .iter()
+            .any(|c| c.name == "dev" || c.name == "start")
+        {
             model.commands.push(pilot_core::CommandInfo::new(
                 "dev",
                 "cargo run",

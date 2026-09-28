@@ -1,8 +1,7 @@
 //! Pilot Diagnostics Engine - Deterministic health checks
 //!
 //! Every check returns structured, evidence-based results: problem, evidence,
-//! possible cause and recommended action, as required by
-//! "Pilot Prerequisite.md" section 17.
+//! possible cause and recommended action.
 //!
 //! Checks are deterministic and read-only. They combine what the scanner already
 //! collected with toolchain probes; no project command is ever executed.

@@ -273,11 +273,7 @@ mod tests {
     use super::*;
 
     fn sample_request() -> ProcessRequest {
-        ProcessRequest {
-            label: "frontend".to_string(),
-            command: "npm run dev".to_string(),
-            working_directory: ".".to_string(),
-        }
+        ProcessRequest::new("frontend", "npm run dev", ".")
     }
 
     #[test]

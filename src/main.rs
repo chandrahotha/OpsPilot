@@ -2,7 +2,7 @@
 //!
 //! Answers the first question a developer has about an unfamiliar directory:
 //! *what is this project?* The scan is read-only and never executes project
-//! commands (see "Pilot Prerequisite.md" sections 1 and 19).
+//! commands.
 
 use pilot_core::ScanResult;
 use std::env;

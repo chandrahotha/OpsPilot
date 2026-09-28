@@ -1,7 +1,7 @@
 //! Environment configuration detection.
 //!
 //! Only the presence of environment files is recorded; values are never read or
-//! exposed (see "Pilot Prerequisite.md" section 15: never display secret values).
+//! exposed (never display secret values).
 
 use crate::{Detector, exists};
 use pilot_core::{EnvironmentInfo, ProjectModel};

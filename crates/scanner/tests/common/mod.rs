@@ -1,8 +1,7 @@
 //! Shared test fixtures.
 //!
 //! Every fixture is created inside a unique temporary directory, so the tests
-//! never depend on the developer's machine configuration
-//! (see "Pilot Prerequisite.md" section 25).
+//! never depend on the developer's machine configuration.
 #![allow(dead_code)]
 
 use pilot_core::ScanResult;

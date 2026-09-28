@@ -5,7 +5,7 @@
 //! configurations in project files.
 //!
 //! Process ownership detection is cross-platform (Windows, Linux, macOS)
-//! and only reports verified ownership ("Pilot Prerequisite.md" section 17).
+//! and only reports verified ownership.
 
 #[cfg(target_os = "linux")]
 use regex::Regex;
@@ -339,7 +339,8 @@ impl PortManager {
 
             let mut buffer = [0u16; 1024];
             let mut size = buffer.len() as u32;
-            let success = win_net::QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut size);
+            let success =
+                win_net::QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut size);
             win_net::CloseHandle(handle);
 
             if success != 0 && size > 0 {
@@ -374,7 +375,8 @@ impl PortManager {
         static COMM_REGEX: OnceLock<Regex> = OnceLock::new();
 
         let pid_regex = PID_REGEX.get_or_init(|| Regex::new(r"pid=(\d+),?").expect("pid regex"));
-        let comm_regex = COMM_REGEX.get_or_init(|| Regex::new(r#"comm=\"([^\"]+)\""#).expect("comm regex"));
+        let comm_regex =
+            COMM_REGEX.get_or_init(|| Regex::new(r#"comm=\"([^\"]+)\""#).expect("comm regex"));
 
         let output = Command::new("ss").args(["-tlnp"]).output().ok()?;
 
@@ -383,7 +385,10 @@ impl PortManager {
         let port_pattern_tab = format!(":\t{}", port);
         // Match port as a full token: ":3000 " avoids ":30000" false positives.
         for line in stdout.lines() {
-            if line.contains(&port_pattern_space) || line.ends_with(&format!(":{port}")) || line.contains(&port_pattern_tab) {
+            if line.contains(&port_pattern_space)
+                || line.ends_with(&format!(":{port}"))
+                || line.contains(&port_pattern_tab)
+            {
                 let pid = pid_regex
                     .captures(line)
                     .and_then(|c| c.get(1))
@@ -453,14 +458,38 @@ impl PortManager {
     }
 
     /// Inspect a port and get its status with ownership info
+    ///
+    /// The occupancy probe (a cheap local bind/connect attempt) and the
+    /// ownership lookup (a separate, slower netstat/lsof/proc query, or a
+    /// native table query on Windows) run one after the other, so the port
+    /// could in principle change hands in between and the reported pid could
+    /// belong to a process that no longer holds it. The cheap occupancy
+    /// probe runs first and short-circuits the common "port is free" case
+    /// (skipping the slower owner lookup entirely, which matters on
+    /// Linux/macOS where it shells out to an external command), then is
+    /// re-run right after the owner lookup: if the port was freed in that
+    /// gap, the stale owner is discarded instead of being attributed to a
+    /// port nothing holds anymore.
     pub fn inspect_port(&self, port: u16) -> PortStatus {
         let occupied = self.is_listening(port) || !self.is_bindable(port);
 
-        let (pid, process, command) = if occupied {
-            if let Some(owner) = self.get_port_owner(port) {
-                (Some(owner.pid), Some(owner.name), Some(owner.command))
-            } else {
-                (None, None, None)
+        if !occupied {
+            return PortStatus {
+                port,
+                available: true,
+                pid: None,
+                process: None,
+                command: None,
+            };
+        }
+
+        let owner = self.get_port_owner(port);
+        let still_occupied = self.is_listening(port) || !self.is_bindable(port);
+
+        let (pid, process, command) = if still_occupied {
+            match owner {
+                Some(owner) => (Some(owner.pid), Some(owner.name), Some(owner.command)),
+                None => (None, None, None),
             }
         } else {
             (None, None, None)
@@ -468,7 +497,7 @@ impl PortManager {
 
         PortStatus {
             port,
-            available: !occupied,
+            available: !still_occupied,
             pid,
             process,
             command,
@@ -574,7 +603,12 @@ impl PortChanger {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
-    fn replace_port_in_json_value(value: &mut serde_json::Value, from: &str, to: &str, key: Option<&str>) {
+    fn replace_port_in_json_value(
+        value: &mut serde_json::Value,
+        from: &str,
+        to: &str,
+        key: Option<&str>,
+    ) {
         match value {
             serde_json::Value::String(s) => {
                 // Only replace if the key suggests it's a port, or if the value is a pure number
@@ -611,7 +645,12 @@ impl PortChanger {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
-    fn replace_port_in_yaml_value(value: &mut serde_yaml::Value, from: &str, to: &str, key: Option<&str>) {
+    fn replace_port_in_yaml_value(
+        value: &mut serde_yaml::Value,
+        from: &str,
+        to: &str,
+        key: Option<&str>,
+    ) {
         match value {
             serde_yaml::Value::String(s) => {
                 if Self::is_port_context(key, s) && s == from {
@@ -640,13 +679,19 @@ impl PortChanger {
 
     /// Replace port in TOML content using toml
     fn replace_port_in_toml(content: &str, from: &str, to: &str) -> Result<String, std::io::Error> {
-        let mut value: toml::Value = content.parse()
+        let mut value: toml::Value = content
+            .parse()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         Self::replace_port_in_toml_value(&mut value, from, to, None);
         Ok(value.to_string())
     }
 
-    fn replace_port_in_toml_value(value: &mut toml::Value, from: &str, to: &str, key: Option<&str>) {
+    fn replace_port_in_toml_value(
+        value: &mut toml::Value,
+        from: &str,
+        to: &str,
+        key: Option<&str>,
+    ) {
         match value {
             toml::Value::String(s) => {
                 if Self::is_port_context(key, s) && s == from {
@@ -686,8 +731,14 @@ impl PortChanger {
     }
 
     /// Replace port in plain text files (fallback for .env, config files, etc.)
+    ///
+    /// Operates on raw bytes throughout (never `byte as char`, which
+    /// reinterprets each byte of a multi-byte UTF-8 character as its own
+    /// Latin-1 codepoint and corrupts any non-ASCII text in the file). This
+    /// stays correct because a match only ever replaces a whole ASCII
+    /// digit-bounded run, so a multi-byte sequence is never split.
     fn replace_port_in_text(content: &str, from: &str, to: &str) -> String {
-        let mut result = String::with_capacity(content.len());
+        let mut result: Vec<u8> = Vec::with_capacity(content.len());
         let mut i = 0;
         let bytes = content.as_bytes();
         let from_bytes = from.as_bytes();
@@ -699,16 +750,17 @@ impl PortChanger {
                 let after_ok = i + from_len >= bytes.len() || !bytes[i + from_len].is_ascii_digit();
 
                 if before_ok && after_ok {
-                    result.push_str(to);
+                    result.extend_from_slice(to.as_bytes());
                     i += from_len;
                     continue;
                 }
             }
-            result.push(bytes[i] as char);
+            result.push(bytes[i]);
             i += 1;
         }
 
-        result
+        String::from_utf8(result)
+            .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
     }
 
     /// Change a port across all relevant files in a project
@@ -935,7 +987,11 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).expect("temp dir must be created");
         // Create a package.json with port 3000
-        fs::write(temp_dir.join("package.json"), r#"{"scripts": {"dev": "vite --port 3000"}}"#).expect("file must be written");
+        fs::write(
+            temp_dir.join("package.json"),
+            r#"{"scripts": {"dev": "vite --port 3000"}}"#,
+        )
+        .expect("file must be written");
 
         let result = execute(PortOperation::ChangePort {
             from: 3000,
