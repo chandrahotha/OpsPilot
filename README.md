@@ -215,10 +215,10 @@ OpsPilot/
 
 ## Testing
 
-- **Rust**: `cargo test --workspace` — 154 tests across core, scanner, port-manager, diagnostics, process-manager, docker, database, desktop shell, CLI.
+- **Rust**: `cargo test --workspace` — 157 tests across core, scanner, port-manager, diagnostics, process-manager, docker, database, desktop shell, CLI.
 - **TypeScript**: `npm run typecheck` — shared contracts + desktop app.
 - **Launcher**: `node --test` — 9 resolution-order tests.
-- **Total**: **163 tests**, all passing, zero compiler warnings, zero clippy warnings (`-D warnings`), `cargo fmt --check` clean.
+- **Total**: **166 tests**, all passing, zero compiler warnings, zero clippy warnings (`-D warnings`), `cargo fmt --check` clean.
 - Fixtures are created in temp directories; nothing is written outside them.
 - `npm run check` (typecheck + all tests) must pass before any PR; the `Check` workflow enforces format, clippy, typecheck, tests, and the web build on every push and PR.
 
@@ -250,7 +250,7 @@ database CLI — never anything else, and never logged or displayed. See
 | 1–9 | Architecture, scanner, dynamic UI, process lifecycle, Docker, database, ports, diagnostics, logs | ✅ Done |
 | 10 | AI layer (optional) | 📋 Planned |
 | 11 | Packaging: installers, platform binary packages | 🔨 Done for Windows NSIS locally; CI builds all platforms on tag |
-| 12 | Release: npm publish, GitHub Releases | 🔨 CI workflow ready (`.github/workflows/release.yml`); npm publish pending registry access |
+| 12 | Release: npm publish, GitHub Releases | 🔨 CI workflow ready (`.github/workflows/release.yml`); publishes on the first `v*` tag push |
 
 ---
 
