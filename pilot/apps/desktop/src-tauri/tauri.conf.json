@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/schema.json",
   "identifier": "com.digitracks.opspilot",
   "productName": "OpsPilot",
-  "version": "0.1.0",
+  "version": "0.1.5",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",

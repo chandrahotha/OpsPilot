@@ -34,6 +34,15 @@ jobs:
             asset: pilot-win32-x64.exe
     steps:
       - uses: actions/checkout@v4
+      - name: Set version from tag
+        # The tag is the single source of truth for the version, so
+        # `pilot --version` always matches the release it shipped in.
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          node -e 'const fs=require("fs"),p="Cargo.toml";let s=fs.readFileSync(p,"utf8");s=s.replace(/^version = "[^"]*"/m,`version = "${process.argv[1]}"`);fs.writeFileSync(p,s)' "$VERSION"
+          grep -m1 '^version' Cargo.toml
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -54,6 +63,7 @@ jobs:
         with:
           name: ${{ matrix.asset }}
           path: target/${{ matrix.target }}/release/${{ matrix.binary }}
+          if-no-files-found: error
 
 
   # Build Tauri desktop app
@@ -96,14 +106,35 @@ jobs:
         # The lockfile lives at the repo root and covers all workspaces;
         # `npm ci` must run where the lockfile is, never in a subpackage.
         run: npm ci
+      - name: Set version from tag
+        # Drives the installer filenames and the version shown in the OS
+        # installer UI - without this they stay pinned at whatever is
+        # committed in tauri.conf.json, regardless of the tag.
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          node -e 'const fs=require("fs"),p="pilot/apps/desktop/src-tauri/tauri.conf.json",c=JSON.parse(fs.readFileSync(p,"utf8"));c.version=process.argv[1];fs.writeFileSync(p,JSON.stringify(c,null,2)+"\n")' "$VERSION"
+          node -e 'const fs=require("fs"),p="Cargo.toml";let s=fs.readFileSync(p,"utf8");s=s.replace(/^version = "[^"]*"/m,`version = "${process.argv[1]}"`);fs.writeFileSync(p,s)' "$VERSION"
+          echo "version -> $VERSION"
       - name: Build Tauri app
         working-directory: pilot/apps/desktop
         run: npm run build
+      - name: Locate bundle output
+        shell: bash
+        run: |
+          echo "=== bundle dirs ==="
+          find . -type d -name bundle -path '*release*' -not -path './node_modules/*'
       - name: Upload Tauri artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ops-pilot-desktop-${{ matrix.target }}
-          path: pilot/apps/desktop/src-tauri/target/release/bundle/
+          # src-tauri is a workspace member, so cargo writes its output to
+          # the workspace-root target/, not to src-tauri/target/.
+          path: target/release/bundle/
+          # Without this, a path that matches nothing is only a warning and
+          # the job still goes green - which hid a broken path for 3 runs.
+          if-no-files-found: error
 
   # Create platform-specific npm packages
   create-platform-packages:
@@ -159,6 +190,7 @@ jobs:
         with:
           name: platform-packages
           path: packages/
+          if-no-files-found: error
 
 
   # Build and test main npm package
@@ -225,6 +257,7 @@ jobs:
         with:
           name: ops-pilot-npm
           path: packages/*.tgz
+          if-no-files-found: error
 
   # Create GitHub Release
   create-release:
@@ -258,10 +291,21 @@ jobs:
           # format (deb/, appimage/, msi/, nsis/, dmg/), and action-gh-release
           # drops any path that isn't a file - so they have to be flattened
           # out of those dirs or they never reach the release at all.
-          find release-assets/ops-pilot-desktop-*/ -type f \
-            \( -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' \
-               -o -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \) \
-            -exec cp {} release/ \;
+          installers=0
+          for dir in release-assets/ops-pilot-desktop-*/; do
+            [ -d "$dir" ] || continue
+            while IFS= read -r f; do
+              cp "$f" release/
+              installers=$((installers + 1))
+            done < <(find "$dir" -type f \( -name '*.deb' -o -name '*.AppImage' \
+              -o -name '*.rpm' -o -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \))
+          done
+          if [ "$installers" -eq 0 ]; then
+            echo "::error::no desktop installers found - the Tauri artifacts are missing or empty"
+            find release-assets -maxdepth 2
+            exit 1
+          fi
+          echo "collected $installers desktop installer(s)"
 
           # Platform npm packages, as a single archive - a bare directory
           # would be dropped by action-gh-release for the same reason.
