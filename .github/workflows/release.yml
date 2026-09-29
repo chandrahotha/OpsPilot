@@ -208,7 +208,10 @@ jobs:
       - name: Run tests
         run: npm test
       - name: Set package version from tag
-        run: npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
+        # The tag normally matches the version already committed in
+        # package.json, and plain `npm version` calls that an error
+        # ("Version not changed") rather than a no-op.
+        run: npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
         working-directory: pilot/packages/cli
       - name: Pack npm package
         run: |
@@ -251,18 +254,20 @@ jobs:
             cp "release-assets/$asset/${asset_binary[$asset]}" "release/$asset"
           done
           
-          # Tauri desktop bundles
-          for dir in release-assets/ops-pilot-desktop-*/; do
-            if [ -d "$dir" ]; then
-              cp -r "$dir"* release/
-            fi
-          done
-          
-          # Platform npm packages. Uploaded from path "packages/", so the
-          # artifact's contents are the platform dirs directly - no extra
-          # "packages" wrapper folder appears when it's downloaded.
+          # Tauri desktop installers. Tauri nests each one under its bundle
+          # format (deb/, appimage/, msi/, nsis/, dmg/), and action-gh-release
+          # drops any path that isn't a file - so they have to be flattened
+          # out of those dirs or they never reach the release at all.
+          find release-assets/ops-pilot-desktop-*/ -type f \
+            \( -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' \
+               -o -name '*.dmg' -o -name '*.msi' -o -name '*.exe' \) \
+            -exec cp {} release/ \;
+
+          # Platform npm packages, as a single archive - a bare directory
+          # would be dropped by action-gh-release for the same reason.
           if [ -d "release-assets/platform-packages" ]; then
-            cp -r release-assets/platform-packages release/platform-packages
+            tar -czf release/ops_pilot-platform-packages.tar.gz \
+              -C release-assets/platform-packages .
           fi
           
           # Main npm package. A quoted glob never matches with `[ -f ... ]`
