@@ -120,18 +120,21 @@ jobs:
         run: |
           mkdir -p packages
           
+          # download-artifact puts each artifact in its own dir named after
+          # it, so the file lives at artifacts/<asset-name>/<binary-name>,
+          # not artifacts/<asset-name> directly.
           # Windows x64
           mkdir -p packages/cli-win32-x64/bin
-          cp artifacts/pilot-win32-x64.exe packages/cli-win32-x64/bin/pilot.exe
-          
+          cp artifacts/pilot-win32-x64.exe/pilot.exe packages/cli-win32-x64/bin/pilot.exe
+
           # macOS x64
           mkdir -p packages/cli-darwin-x64/bin
-          cp artifacts/pilot-macos-x64 packages/cli-darwin-x64/bin/pilot
+          cp artifacts/pilot-macos-x64/pilot packages/cli-darwin-x64/bin/pilot
           chmod +x packages/cli-darwin-x64/bin/pilot
-          
+
           # Linux x64
           mkdir -p packages/cli-linux-x64/bin
-          cp artifacts/pilot-linux-x64 packages/cli-linux-x64/bin/pilot
+          cp artifacts/pilot-linux-x64/pilot packages/cli-linux-x64/bin/pilot
           chmod +x packages/cli-linux-x64/bin/pilot
           
           # Create package.json for each platform package
@@ -181,10 +184,12 @@ jobs:
           mkdir -p pilot/packages/cli/bin
           
           # Include all platform binaries, named as resolve-binary.js expects:
-          # pilot-<platform>-<arch>[.exe]
-          cp artifacts/pilot-linux-x64 pilot/packages/cli/bin/pilot-linux-x64
-          cp artifacts/pilot-macos-x64 pilot/packages/cli/bin/pilot-darwin-x64
-          cp artifacts/pilot-win32-x64.exe pilot/packages/cli/bin/pilot-win32-x64.exe
+          # pilot-<platform>-<arch>[.exe]. download-artifact puts each
+          # artifact in its own dir named after it, so the file lives at
+          # artifacts/<asset-name>/<binary-name>, not artifacts/<asset-name>.
+          cp artifacts/pilot-linux-x64/pilot pilot/packages/cli/bin/pilot-linux-x64
+          cp artifacts/pilot-macos-x64/pilot pilot/packages/cli/bin/pilot-darwin-x64
+          cp artifacts/pilot-win32-x64.exe/pilot.exe pilot/packages/cli/bin/pilot-win32-x64.exe
           chmod +x pilot/packages/cli/bin/pilot-linux-x64 pilot/packages/cli/bin/pilot-darwin-x64
       - name: Install npm dependencies
         run: npm ci
@@ -226,9 +231,17 @@ jobs:
         run: |
           mkdir -p release
           
-          # Native CLI binaries
-          for asset in pilot-linux-x64 pilot-macos-x64 pilot-win32-x64.exe; do
-            cp release-assets/$asset/$asset release/
+          # Native CLI binaries. download-artifact puts each artifact in its
+          # own dir named after it, but the file inside keeps its build name
+          # (pilot or pilot.exe), not the asset name - map and rename so the
+          # release page shows sensibly distinct filenames per platform.
+          declare -A asset_binary=(
+            [pilot-linux-x64]=pilot
+            [pilot-macos-x64]=pilot
+            [pilot-win32-x64.exe]=pilot.exe
+          )
+          for asset in "${!asset_binary[@]}"; do
+            cp "release-assets/$asset/${asset_binary[$asset]}" "release/$asset"
           done
           
           # Tauri desktop bundles
@@ -243,10 +256,11 @@ jobs:
             cp -r release-assets/platform-packages/packages release/platform-packages
           fi
           
-          # Main npm package
-          if [ -f "release-assets/ops-pilot-npm/ops_pilot-cli-*.tgz" ]; then
-            cp release-assets/ops-pilot-npm/ops_pilot-cli-*.tgz release/
-          fi
+          # Main npm package. A quoted glob never matches with `[ -f ... ]`
+          # (the * stays literal), so this always silently skipped before;
+          # build-npm is a hard dependency of this job, so the tarball is
+          # guaranteed to exist by the time this step runs.
+          cp release-assets/ops-pilot-npm/ops_pilot-cli-*.tgz release/
           
           ls -la release/
       - name: Create Release
