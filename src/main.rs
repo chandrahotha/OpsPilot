@@ -23,6 +23,10 @@ fn main() -> ExitCode {
                 print_usage();
                 return ExitCode::SUCCESS;
             }
+            "-V" | "--version" => {
+                println!("pilot {}", env!("CARGO_PKG_VERSION"));
+                return ExitCode::SUCCESS;
+            }
             other if other.starts_with('-') => {
                 eprintln!("pilot: unknown option `{other}`");
                 print_usage();
@@ -78,6 +82,7 @@ fn print_usage() {
     println!("OPTIONS:");
     println!("    --json    Print the normalized project model as JSON");
     println!("    -h, --help    Print this help");
+    println!("    -V, --version Print the version");
 }
 
 /// Render the scan result as a human-readable report

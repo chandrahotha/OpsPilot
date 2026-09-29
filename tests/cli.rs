@@ -116,6 +116,16 @@ fn prints_help_for_the_help_flag() {
 }
 
 #[test]
+fn prints_the_version_for_the_version_flag() {
+    let output = run(&["--version"]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout must be utf-8");
+    assert!(stdout.starts_with("pilot "));
+    assert!(stdout.contains(env!("CARGO_PKG_VERSION")));
+}
+
+#[test]
 fn rejects_unknown_options() {
     let output = run(&["--nope"]);
 
