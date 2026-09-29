@@ -1,6 +1,6 @@
 {
   "name": "@ops_pilot/cli",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Detect and operate an unfamiliar project directory: services, ports, environment and diagnostics.",
   "license": "Apache-2.0",
   "author": "Digi Tracks",
@@ -16,7 +16,8 @@
   "type": "commonjs",
   "bin": {
     "pilot": "bin/ops-pilot.js",
-    "ops_pilot": "bin/ops-pilot.js"
+    "ops_pilot": "bin/ops-pilot.js",
+    "opspilot": "bin/ops-pilot.js"
   },
   "main": "lib/resolve-binary.js",
   "files": [

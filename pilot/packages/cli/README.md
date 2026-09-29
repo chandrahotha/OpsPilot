@@ -23,7 +23,8 @@ pilot
 
 `pilot [path] [--json]` scans a directory and reports what the project is:
 detected stack, service ports, database, ORM, Docker and environment files, each
-with the evidence it is based on.
+with the evidence it is based on. `ops_pilot` and `opspilot` work identically,
+if `pilot` collides with something else already on your PATH.
 
 ```bash
 pilot                # scan the current directory
